@@ -100,3 +100,6 @@ body:not(.running) .guide{display:none}
 .roi-handle.w{left:0;top:50%;cursor:w-resize}
 .guide.dragging .roi-handle{background:#f3ffd6}
 .settings-content .range-label{margin:12px 0}
+
+.ocr-queue-stats{margin:8px 1px 0;padding:0 2px;gap:8px;flex-wrap:wrap;font-size:10px}
+.ocr-queue-stats span{white-space:nowrap}
