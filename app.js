@@ -259,7 +259,7 @@
   function inspectRussianLine(line, confidence) {
     const source = clean(line);
     if (!source) return { accepted: false, reason: "пустая строка", text: "" };
-    if (Number.isFinite(confidence) && confidence < 27) {
+    if (Number.isFinite(confidence) && confidence < 18) {
       return { accepted: false, reason: "низкая уверенность OCR", text: "" };
     }
 
@@ -429,10 +429,12 @@
     if (cropHeight < 10) return null;
 
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 1.35);
-    processed.height = Math.round(cropHeight * 1.35);
+    processed.width = Math.round(cropWidth * 2.2);
+    processed.height = Math.round(cropHeight * 2.2);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
-    pctx.filter = "grayscale(1) contrast(1.35)";
+    pctx.imageSmoothingEnabled = true;
+    pctx.imageSmoothingQuality = "high";
+    pctx.filter = "grayscale(1) contrast(1.65)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
     return processed;
