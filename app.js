@@ -367,12 +367,12 @@
     if (cropHeight < 10) return null;
 
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 2.2);
-    processed.height = Math.round(cropHeight * 2.2);
+    processed.width = Math.round(cropWidth * 2.5);
+    processed.height = Math.round(cropHeight * 2.5);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
     pctx.imageSmoothingEnabled = true;
     pctx.imageSmoothingQuality = "high";
-    pctx.filter = "grayscale(1) contrast(1.65)";
+    pctx.filter = "grayscale(1) contrast(1.25) brightness(1.05)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
     return processed;
@@ -436,9 +436,14 @@
           }
 
           const isNewPhrase = key !== lastEnqueuedKey;
-          const stableOrClear = candidateCount >= 2;
+          // Чем ниже уверенность OCR, тем больше независимых кадров требуем
+          // перед озвучкой. Очень сомнительные результаты не произносим.
+          const confidence = Number(subtitle.confidence) || 0;
+          const requiredReads = confidence >= 55 ? 2 : confidence >= 35 ? 3 : 4;
+          const stableOrClear = candidateCount >= requiredReads;
+          const confidenceAcceptable = confidence >= 25;
 
-          if (isNewPhrase && stableOrClear) {
+          if (isNewPhrase && stableOrClear && confidenceAcceptable) {
             lastEnqueuedKey = key;
             queue.push(subtitle);
             setQueueCount();
