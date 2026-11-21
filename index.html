@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101319">
   <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
   <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.5">
+  <link rel="stylesheet" href="./styles.css?v=0.6">
 </head>
 <body>
   <main class="app">
@@ -17,10 +17,10 @@
 
     <section class="panel camera-panel">
       <div class="section-head"><div><h2>Камера</h2><p>Направь заднюю камеру на экран с субтитрами</p></div><span class="live-dot" id="liveDot"></span></div>
-      <div class="video-wrap">
+      <div class="video-wrap" id="videoWrap">
         <video id="camera" autoplay muted playsinline></video>
-        <div class="guide" id="guide"><span>Сканируется только эта рамка</span></div>
-        <div id="placeholder" class="placeholder"><div class="camera-icon">◎</div><b>Камера выключена</b><small>Лучше поставить телефон неподвижно напротив экрана</small></div>
+        <div class="guide" id="guide"><span>Зона распознавания</span></div>
+        <div id="placeholder" class="placeholder"><div class="camera-icon">◎</div><b>Камера выключена</b><small>Нажми «Включить камеру»</small></div>
       </div>
       <section class="ocr-inline">
         <div class="section-head"><h2>Распознанный текст</h2><span class="pill" id="ocrState">Ожидание</span></div>
@@ -28,12 +28,12 @@
         <details class="debug-ocr"><summary>Что OCR реально увидел</summary><pre id="rawText">Пока нет данных</pre></details>
         <div class="stats"><span>Очередь: <b id="queueState">0</b></span><span>Последнее распознавание: <b id="latency">—</b></span></div>
       </section>
-      <div class="roi-controls">
-        <div class="roi-heading"><b>Точная зона субтитров</b><output id="roiLabel">Низ · 78% / 18%</output></div>
+      <details class="roi-controls">
+        <summary><b>Настроить рамку субтитров</b><output id="roiLabel">78% / 18%</output></summary>
         <label class="range-label"><span>Положение сверху</span><output id="roiTopValue">78%</output><input id="roiTop" type="range" min="55" max="88" step="1" value="78"></label>
         <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">18%</output><input id="roiHeight" type="range" min="10" max="25" step="1" value="18"></label>
-        <p class="hint">Перемести рамку так, чтобы внутри были только строки субтитров, без HUD и остального изображения. OCR читает только то, что внутри рамки.</p>
-      </div>
+        <p class="hint">Подгони зелёную рамку под две строки субтитров. OCR читает только внутри неё.</p>
+      </details>
       <div class="buttons">
         <button id="startCamera" class="primary">Включить камеру</button>
         <button id="stopCamera" disabled>Остановить</button>
@@ -64,10 +64,10 @@
       <button id="speakManual" class="secondary full">Произнести текст</button>
     </section>
 
-    <footer>GTA6 Voice · прототип 0.5 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.6 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="./app.js?v=0.5"></script>
+  <script src="./app.js?v=0.6"></script>
 </body>
 </html>
