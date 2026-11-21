@@ -259,88 +259,26 @@
   function inspectRussianLine(line, confidence) {
     const source = clean(line);
     if (!source) return { accepted: false, reason: "пустая строка", text: "" };
-    if (Number.isFinite(confidence) && confidence < 18) {
-      return { accepted: false, reason: "низкая уверенность OCR", text: "" };
-    }
 
-    const tokens = source.split(/\s+/).filter(Boolean);
-    const acceptedTokens = [];
-    let rejectedTokens = 0;
-    let numericTokens = 0;
-
-    for (const token of tokens) {
-      const core = token.replace(/^[^0-9A-Za-zА-Яа-яЁё]+|[^0-9A-Za-zА-Яа-яЁё]+$/g, "");
-      if (!core) continue;
-
-      // Speaker labels are metadata, not dialogue. Only allow the known labels.
-      if (/^(Jason|Lucia|Tourist)$/i.test(core)) continue;
-
-      // Isolated numbers commonly come from HUD/icons. Keep them only in a clear Russian sentence.
-      if (/^\d+$/.test(core)) {
-        numericTokens++;
-        continue;
-      }
-
-      // Latin-looking OCR fragments are usually shapes or scenery, not Russian speech.
-      if (/[A-Za-z]/.test(core)) {
-        rejectedTokens++;
-        continue;
-      }
-
-      if (!/^[А-Яа-яЁё-]+$/i.test(core)) {
-        rejectedTokens++;
-        continue;
-      }
-
-      const word = core.toLocaleLowerCase("ru-RU").replace(/^-+|-+$/g, "");
-      if (!word) continue;
-
-      if (word.length <= 2) {
-        if (SHORT_RUSSIAN_WORDS.has(word)) acceptedTokens.push(token);
-        else rejectedTokens++;
-        continue;
-      }
-
-      if (!RUSSIAN_VOWELS.test(word) || RUSSIAN_CONSONANT_RUN.test(word) || /(.)\1\1/i.test(word)) {
-        rejectedTokens++;
-        continue;
-      }
-
-      // Avoid OCR gibberish with an implausibly high consonant ratio.
-      const letters = word.match(/[А-Яа-яЁё]/g) || [];
-      const vowels = word.match(/[аеёиоуыэюя]/g) || [];
-      if (letters.length >= 5 && vowels.length / letters.length < 0.18) {
-        rejectedTokens++;
-        continue;
-      }
-
-      acceptedTokens.push(token);
-    }
-
-    if (!acceptedTokens.length) {
-      return { accepted: false, reason: "нет правдоподобных русских слов", text: "" };
-    }
-    if (rejectedTokens > acceptedTokens.length) {
-      return { accepted: false, reason: "слишком много подозрительных фрагментов", text: "" };
-    }
-    if (numericTokens && (acceptedTokens.length < 2 || !Number.isFinite(confidence) || confidence < 72)) {
-      return { accepted: false, reason: "цифры без надёжного русского контекста", text: "" };
-    }
-
-    const text = clean(acceptedTokens.join(" "))
-      .replace(/[^А-Яа-яЁё .,!?…:;()'’\-0-9]/g, "")
-      .replace(/\s+/g, " ").trim();
-    if (text.length < 2 || text.length > 180) {
-      return { accepted: false, reason: "неподходящая длина строки", text: "" };
-    }
+    // Не проверяем каждое слово по эвристикам: они отбрасывали настоящие
+    // разговорные слова и короткие фразы. Основная защита теперь — зона OCR
+    // и совпадение реплики на двух последовательных кадрах.
+    const text = source
+      .replace(/\\b(?:Jason|Lucia|Tourist)\\b\\s*[:：-]?/gi, "")
+      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\\-]/g, "")
+      .replace(/\\s+/g, " ")
+      .trim();
 
     const russianLetters = text.match(/[А-Яа-яЁё]/g) || [];
     const lettersAndDigits = text.match(/[А-Яа-яЁё0-9]/g) || [];
-    if (!russianLetters.length || russianLetters.length / Math.max(1, lettersAndDigits.length) < 0.8) {
-      return { accepted: false, reason: "слишком много цифр или некириллических знаков", text: "" };
+    if (text.length < 2 || text.length > 180) {
+      return { accepted: false, reason: "неподходящая длина строки", text: "" };
+    }
+    if (russianLetters.length < 2 || russianLetters.length / Math.max(1, lettersAndDigits.length) < 0.55) {
+      return { accepted: false, reason: "мало русского текста", text: "" };
     }
 
-    return { accepted: true, reason: "похоже на русскую реплику", text };
+    return { accepted: true, reason: "русский текст", text };
   }
 
   function similarCaption(a, b) {
