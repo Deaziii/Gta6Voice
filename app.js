@@ -350,7 +350,7 @@
     };
   }
 
-    function prepareRecognitionImage() {
+  function prepareRecognitionImage() {
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (!width || !height) return null;
@@ -373,12 +373,10 @@
     if (cropHeight < 10) return null;
 
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 2.5);
-    processed.height = Math.round(cropHeight * 2.5);
+    processed.width = Math.round(cropWidth * 1.35);
+    processed.height = Math.round(cropHeight * 1.35);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
-    pctx.imageSmoothingEnabled = true;
-    pctx.imageSmoothingQuality = "high";
-    pctx.filter = "grayscale(1) contrast(1.25) brightness(1.05)";
+    pctx.filter = "grayscale(1) contrast(1.35)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
     return processed;
@@ -410,15 +408,7 @@
           continue;
         }
 
-        let result = await worker.recognize(image);
-        const firstConfidence = Number(result.data.confidence) || 0;
-        // Retry sparse-text layout only when normal block recognition is weak.
-        if (firstConfidence < 35) {
-          await worker.setParameters({ tessedit_pageseg_mode: "11" });
-          const alternate = await worker.recognize(image);
-          await worker.setParameters({ tessedit_pageseg_mode: "6" });
-          if ((Number(alternate.data.confidence) || 0) > firstConfidence) result = alternate;
-        }
+        const result = await worker.recognize(image);
         consecutiveOcrErrors = 0;
         const raw = clean(result.data.text || "");
         $("rawText").textContent = raw || "Внутри рамки нет распознанного текста.";
