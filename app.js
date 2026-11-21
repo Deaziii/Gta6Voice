@@ -235,6 +235,9 @@
       });
       video.srcObject = stream;
       await video.play();
+      if (video.videoWidth && video.videoHeight) {
+        $("videoWrap").style.aspectRatio = video.videoWidth + " / " + video.videoHeight;
+      }
       $("videoWrap").classList.add("camera-active");
       $("placeholder").hidden = true;
       $("startCamera").disabled = true;
