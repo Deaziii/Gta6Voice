@@ -58,3 +58,6 @@ body:not(.running) .guide{display:none}
 .settings-content .check{margin:12px 0 5px}
 .camera-panel>.hint{margin-top:12px}
 @media(max-width:360px){.quick-controls{grid-template-columns:1fr}}
+
+.speech-status{margin:0 0 12px;color:var(--muted);font-size:11px}
+.speech-status span{color:#d8e4cb}
