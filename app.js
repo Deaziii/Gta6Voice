@@ -149,18 +149,112 @@
     setQueueCount();
   }
 
-  function isRussianSubtitleLine(line, confidence) {
-    const value = clean(line);
-    const letters = value.match(/[A-Za-zА-Яа-яЁё]/g) || [];
-    const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
-    if (cyrillic.length < 2 || !letters.length) return false;
-    if (cyrillic.length / letters.length < 0.82) return false;
-    if (Number.isFinite(confidence) && confidence < 30) return false;
-    const words = value.split(/\s+/).filter(Boolean);
-    const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
-    if (tinyWords > 2 || tinyWords / Math.max(1, words.length) > 0.3) return false;
-    if (!/[аеёиоуыэюя]/i.test(value)) return false;
-    return true;
+  const SHORT_RUSSIAN_WORDS = new Set([
+    "а","и","о","у","я","ё","в","к","с","н","не","ни","на","но","ну","да","до","за","из","от","об",
+    "во","вы","мы","ты","он","она","они","оно","по","под","при","про","то","те","это","эта","эти",
+    "же","ли","бы","ах","ох","ой","эй","ух","их","им","ему","ей","её","всё","все","так","как",
+    "там","тут","где","кто","что","чем","чей","мой","твой","ваш","наш"
+  ]);
+  const RUSSIAN_VOWELS = /[аеёиоуыэюя]/i;
+  const RUSSIAN_CONSONANT_RUN = /[бвгджзйклмнпрстфхцчшщ]{5,}/i;
+
+  function inspectRussianLine(line, confidence) {
+    const source = clean(line);
+    if (!source) return { accepted: false, reason: "пустая строка", text: "" };
+    if (Number.isFinite(confidence) && confidence < 27) {
+      return { accepted: false, reason: "низкая уверенность OCR", text: "" };
+    }
+
+    const tokens = source.split(/\s+/).filter(Boolean);
+    const acceptedTokens = [];
+    let rejectedTokens = 0;
+    let numericTokens = 0;
+
+    for (const token of tokens) {
+      const core = token.replace(/^[^0-9A-Za-zА-Яа-яЁё]+|[^0-9A-Za-zА-Яа-яЁё]+$/g, "");
+      if (!core) continue;
+
+      // Speaker labels are metadata, not dialogue. Only allow the known labels.
+      if (/^(Jason|Lucia|Tourist)$/i.test(core)) continue;
+
+      // Isolated numbers commonly come from HUD/icons. Keep them only in a clear Russian sentence.
+      if (/^\d+$/.test(core)) {
+        numericTokens++;
+        continue;
+      }
+
+      // Latin-looking OCR fragments are usually shapes or scenery, not Russian speech.
+      if (/[A-Za-z]/.test(core)) {
+        rejectedTokens++;
+        continue;
+      }
+
+      if (!/^[А-Яа-яЁё-]+$/i.test(core)) {
+        rejectedTokens++;
+        continue;
+      }
+
+      const word = core.toLocaleLowerCase("ru-RU").replace(/^-+|-+$/g, "");
+      if (!word) continue;
+
+      if (word.length <= 2) {
+        if (SHORT_RUSSIAN_WORDS.has(word)) acceptedTokens.push(token);
+        else rejectedTokens++;
+        continue;
+      }
+
+      if (!RUSSIAN_VOWELS.test(word) || RUSSIAN_CONSONANT_RUN.test(word) || /(.)\1\1/i.test(word)) {
+        rejectedTokens++;
+        continue;
+      }
+
+      // Avoid OCR gibberish with an implausibly high consonant ratio.
+      const letters = word.match(/[А-Яа-яЁё]/g) || [];
+      const vowels = word.match(/[аеёиоуыэюя]/g) || [];
+      if (letters.length >= 5 && vowels.length / letters.length < 0.18) {
+        rejectedTokens++;
+        continue;
+      }
+
+      acceptedTokens.push(token);
+    }
+
+    if (!acceptedTokens.length) {
+      return { accepted: false, reason: "нет правдоподобных русских слов", text: "" };
+    }
+    if (rejectedTokens > acceptedTokens.length) {
+      return { accepted: false, reason: "слишком много подозрительных фрагментов", text: "" };
+    }
+    if (numericTokens && (acceptedTokens.length < 2 || !Number.isFinite(confidence) || confidence < 72)) {
+      return { accepted: false, reason: "цифры без надёжного русского контекста", text: "" };
+    }
+
+    const text = clean(acceptedTokens.join(" "))
+      .replace(/[^А-Яа-яЁё .,!?…:;()'’\-0-9]/g, "")
+      .replace(/\s+/g, " ").trim();
+    if (text.length < 2 || text.length > 180) {
+      return { accepted: false, reason: "неподходящая длина строки", text: "" };
+    }
+
+    const russianLetters = text.match(/[А-Яа-яЁё]/g) || [];
+    const lettersAndDigits = text.match(/[А-Яа-яЁё0-9]/g) || [];
+    if (!russianLetters.length || russianLetters.length / Math.max(1, lettersAndDigits.length) < 0.8) {
+      return { accepted: false, reason: "слишком много цифр или некириллических знаков", text: "" };
+    }
+
+    return { accepted: true, reason: "похоже на русскую реплику", text };
+  }
+
+  function similarCaption(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const aa = a.split(" ").filter(Boolean);
+    const bb = b.split(" ").filter(Boolean);
+    const shorter = aa.length <= bb.length ? aa : bb;
+    const longer = aa.length <= bb.length ? bb : aa;
+    if (longer.length - shorter.length > 2) return false;
+    const common = shorter.filter(word => longer.includes(word)).length;
+    return common / Math.max(1, longer.length) >= 0.82;
   }
 
   function parseSubtitle(data) {
@@ -171,32 +265,50 @@
 
     let speaker = "";
     const accepted = [];
+    const report = [];
+
     for (const line of lines) {
       if (!line.text) continue;
+      let lineText = line.text;
       if ($("showNames").checked) {
-        const match = line.text.match(namePattern);
+        const match = lineText.match(namePattern);
         if (match) {
           speaker = match[1];
-          line.text = clean(line.text.slice(match[0].length));
-          if (!line.text) continue;
+          lineText = clean(lineText.slice(match[0].length));
+          if (!lineText) {
+            report.push("NAME · " + line.text);
+            continue;
+          }
         }
       }
-      if (isRussianSubtitleLine(line.text, line.confidence)) accepted.push(line);
+
+      const inspected = inspectRussianLine(lineText, line.confidence);
+      report.push(
+        (inspected.accepted ? "OK" : "SKIP") +
+        " [" + (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") + "%] " +
+        (inspected.accepted ? inspected.text : line.text + " — " + inspected.reason)
+      );
+      if (inspected.accepted) accepted.push(inspected.text);
     }
 
-    const text = clean(accepted.map(line => line.text).join(" "))
+    const text = clean(accepted.join(" "))
       .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\-]/g, "")
       .replace(/\s+/g, " ").trim();
-    if (text.length < 2 || text.length > 180) return null;
 
-    const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
+    if (!text) return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
+
+    const confidences = lines.map(line => line.confidence).filter(Number.isFinite);
     const confidence = confidences.length
       ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
       : Number(data.confidence) || 0;
-    return { text, speaker, confidence };
+
+    return {
+      subtitle: { text, speaker, confidence },
+      report: report.join("\n")
+    };
   }
 
-  function prepareRecognitionImage() {
+    function prepareRecognitionImage() {
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (!width || !height) return null;
@@ -252,10 +364,12 @@
         $("rawText").textContent = raw || "Внутри рамки нет распознанного текста.";
         $("latency").textContent = Math.round(performance.now() - started) + " мс OCR";
 
-        const subtitle = parseSubtitle(result.data);
+        const parsed = parseSubtitle(result.data);
+        const subtitle = parsed.subtitle;
+        $("rawText").textContent = parsed.report;
         if (!subtitle) {
-          $("ocrState").textContent = "Ищу субтитры…";
-          $("lastText").textContent = "Пока нет чистой русской реплики.";
+          $("ocrState").textContent = "Фильтр отсеял шум";
+          $("lastText").textContent = "Чистая русская реплика пока не найдена.";
           previousCandidate = "";
           candidateCount = 0;
           emptyCaptionReads++;
@@ -265,14 +379,16 @@
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
           emptyCaptionReads = 0;
           const key = normalize(subtitle.text);
-          if (key === previousCandidate) candidateCount++;
-          else {
+          if (similarCaption(key, previousCandidate)) {
+            candidateCount++;
+            previousCandidate = key;
+          } else {
             previousCandidate = key;
             candidateCount = 1;
           }
 
           const isNewPhrase = key !== lastEnqueuedKey;
-          const stableOrClear = candidateCount >= 2 || subtitle.confidence >= 68;
+          const stableOrClear = candidateCount >= 2;
 
           if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
@@ -322,7 +438,7 @@
     await newWorker.setParameters({
       tessedit_pageseg_mode: "6",
       preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- "
+      tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()-"
     });
     return newWorker;
   }
