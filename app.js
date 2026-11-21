@@ -17,6 +17,7 @@
   let previousCandidate = "";
   let candidateCount = 0;
   let lastEnqueuedKey = "";
+  let lastEmptyStartedAt = 0;
   let emptyCaptionReads = 0;
   let lastScanAt = 0;
   let consecutiveOcrErrors = 0;
@@ -328,7 +329,7 @@
     return common / Math.max(1, longer.length) >= 0.82;
   }
 
-  function prepareRecognitionImage() {
+  function prepareRecognitionImage(darkFallback = false) {
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (!width || !height) return null;
@@ -354,7 +355,9 @@
     processed.width = Math.round(cropWidth * 1.8);
     processed.height = Math.round(cropHeight * 1.8);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
-    pctx.filter = "grayscale(1) contrast(1.35)";
+    pctx.filter = darkFallback
+      ? "grayscale(1) contrast(1.7) brightness(0.82)"
+      : "grayscale(1) contrast(1.35)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
     return processed;
@@ -386,13 +389,29 @@
           continue;
         }
 
-        const result = await worker.recognize(image);
+        let result = await worker.recognize(image);
+        let parsed = parseSubtitle(result.data);
+
+        // Bright TV scenes can wash out the subtitle outline. Retry those weak frames
+        // once with a darker, higher-contrast local canvas image (no external service).
+        if (!parsed.subtitle || parsed.subtitle.confidence < 45) {
+          const darkerImage = prepareRecognitionImage(true);
+          if (darkerImage) {
+            const darkerResult = await worker.recognize(darkerImage);
+            const darkerParsed = parseSubtitle(darkerResult.data);
+            if (darkerParsed.subtitle &&
+                (!parsed.subtitle || darkerParsed.subtitle.confidence > parsed.subtitle.confidence)) {
+              result = darkerResult;
+              parsed = darkerParsed;
+            }
+          }
+        }
+
         consecutiveOcrErrors = 0;
         const raw = clean(result.data.text || "");
         $("rawText").textContent = raw || "Внутри рамки нет распознанного текста.";
         $("latency").textContent = Math.round(performance.now() - started) + " мс OCR";
 
-        const parsed = parseSubtitle(result.data);
         const subtitle = parsed.subtitle;
         $("rawText").textContent = parsed.report;
         if (!subtitle) {
@@ -402,7 +421,12 @@
           candidateCount = 0;
           emptyCaptionReads++;
           consecutiveEmptyReads++;
-          if (emptyCaptionReads >= 2) lastEnqueuedKey = "";
+          if (!lastEmptyStartedAt) lastEmptyStartedAt = Date.now();
+          // Only unlock the last spoken line after it has genuinely disappeared for 5 seconds.
+          if (Date.now() - lastEmptyStartedAt >= 5000) {
+            lastEnqueuedKey = "";
+            lastEmptyStartedAt = 0;
+          }
         } else if ((Number(subtitle.confidence) || 0) < 18) {
           $("ocrState").textContent = "Слабое распознавание — повторяю";
           $("lastText").textContent = "Пока не удалось уверенно прочитать субтитры.";
@@ -414,6 +438,7 @@
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
           emptyCaptionReads = 0;
           consecutiveEmptyReads = 0;
+          lastEmptyStartedAt = 0;
           const key = normalize(subtitle.text);
           if (similarCaption(key, previousCandidate)) {
             candidateCount++;
@@ -423,7 +448,7 @@
             candidateCount = 1;
           }
 
-          const isNewPhrase = key !== lastEnqueuedKey;
+          const isNewPhrase = !lastEnqueuedKey || !similarCaption(key, lastEnqueuedKey);
           const stableOrClear = candidateCount >= 2 || subtitle.confidence >= 68;
 
           if (isNewPhrase && stableOrClear) {
