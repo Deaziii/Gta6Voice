@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101319">
   <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
   <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.13">
+  <link rel="stylesheet" href="./styles.css?v=0.14">
 </head>
 <body>
   <main class="app">
@@ -35,6 +35,10 @@
       <div class="ocr-inline">
         <div class="section-head"><h2>Распознанный текст</h2><span class="pill" id="ocrState">Ожидание</span></div>
         <div id="lastText" class="last-text">Здесь появится реплика из игры…</div>
+        <details class="debug-ocr">
+          <summary>Что реально увидел OCR</summary>
+          <pre id="rawText">Пока нет данных</pre>
+        </details>
       </div>
 
       <section class="settings-area">
@@ -50,10 +54,10 @@
         </details>
 
         <details class="settings-group">
-          <summary><span><b>Распознавание текста</b><small>Какие подписи учитывать</small></span></summary>
+          <summary><span><b>Распознавание имён</b><small>Имя персонажа перед репликой</small></span></summary>
           <div class="settings-content">
-            <label class="check"><input id="showNames" type="checkbox" checked><span>Распознавать Jason / Lucia / Tourist в субтитрах</span></label>
-            <p class="hint">Фильтр отбрасывает большую часть случайных символов, цифр и обрывков текста. Слишком агрессивная фильтрация может пропустить короткую игровую реплику.</p>
+            <label class="check"><input id="showNames" type="checkbox" checked><span>Определять имя говорящего (Jason / Lucia / Tourist)</span></label>
+            <p class="hint">Эта настройка ищет имя персонажа перед субтитрами и помогает выбрать для него отдельный голос. Сам текст реплики распознаётся независимо.</p>
           </div>
         </details>
 
@@ -83,16 +87,15 @@
           <summary><span><b>Диагностика распознавания</b><small>Очередь фраз, скорость и сырой результат OCR</small></span></summary>
           <div class="settings-content">
             <div class="stats"><span>Очередь: <b id="queueState">0</b></span><span>Последнее распознавание: <b id="latency">—</b></span></div>
-            <details class="debug-ocr"><summary>Что OCR реально увидел</summary><pre id="rawText">Пока нет данных</pre></details>
           </div>
         </details>
       </section>
       <p class="hint">Разреши доступ к камере. Страница должна быть открыта через HTTPS. Звук идёт с телефона или подключённой к нему колонки.</p>
     </section>
-    <footer>GTA6 Voice · прототип 0.13 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.14 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="./app.js?v=0.13"></script>
+  <script src="./app.js?v=0.14"></script>
 </body>
 </html>
