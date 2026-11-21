@@ -328,60 +328,6 @@
     return common / Math.max(1, longer.length) >= 0.82;
   }
 
-  function parseSubtitle(data) {
-    const namePattern = /^(Jason|Lucia|Tourist)\s*[:：-]?\s*/i;
-    const lines = Array.isArray(data.lines) && data.lines.length
-      ? data.lines.map(line => ({ text: clean(line.text), confidence: Number(line.confidence) }))
-      : (data.text || "").split(/\r?\n/).map(text => ({ text: clean(text), confidence: Number(data.confidence) }));
-
-    let speaker = "";
-    const accepted = [];
-    const acceptedConfidences = [];
-    const report = [];
-
-    for (const line of lines) {
-      if (!line.text) continue;
-      let lineText = line.text;
-      if ($("showNames").checked) {
-        const match = lineText.match(namePattern);
-        if (match) {
-          speaker = match[1];
-          lineText = clean(lineText.slice(match[0].length));
-          if (!lineText) {
-            report.push("NAME · " + line.text);
-            continue;
-          }
-        }
-      }
-
-      const inspected = inspectRussianLine(lineText, line.confidence);
-      report.push(
-        (inspected.accepted ? "OK" : "SKIP") +
-        " [" + (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") + "%] " +
-        (inspected.accepted ? inspected.text : line.text + " — " + inspected.reason)
-      );
-      if (inspected.accepted) {
-        accepted.push(inspected.text);
-        if (Number.isFinite(line.confidence)) acceptedConfidences.push(line.confidence);
-      }
-    }
-
-    const text = clean(accepted.join(" "))
-      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\-]/g, "")
-      .replace(/\s+/g, " ").trim();
-
-    if (!text) return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
-
-    const confidence = acceptedConfidences.length
-      ? acceptedConfidences.reduce((sum, value) => sum + value, 0) / acceptedConfidences.length
-      : Number(data.confidence) || 0;
-
-    return {
-      subtitle: { text, speaker, confidence },
-      report: report.join("\n")
-    };
-  }
-
   function prepareRecognitionImage() {
     const width = video.videoWidth;
     const height = video.videoHeight;
