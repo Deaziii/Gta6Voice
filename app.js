@@ -74,12 +74,12 @@
     utterance.onstart = () => { $("speechState").textContent = "Говорит"; };
     utterance.onend = () => {
       $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
-      onDone();
+      window.setTimeout(onDone, 120);
     };
     utterance.onerror = event => {
       console.warn("Speech synthesis error", event);
       $("speechState").textContent = "Ошибка TTS";
-      onDone();
+      window.setTimeout(onDone, 120);
     };
     try { speechSynthesis.speak(utterance); }
     catch (error) {
@@ -104,6 +104,8 @@
     const warmup = new SpeechSynthesisUtterance(" ");
     warmup.lang = "ru-RU";
     warmup.volume = 0;
+    warmup.onend = () => window.setTimeout(playQueue, 120);
+    warmup.onerror = () => window.setTimeout(playQueue, 120);
     speechSynthesis.speak(warmup);
     refreshVoices();
   }
