@@ -9,6 +9,7 @@
   let scanning = false;
   let loopRunning = false;
   let speechEnabled = true;
+  let recognitionEnabled = true;
   let audioUnlocked = false;
   let activeSpeech = false;
   let speechWatchdog = null;
@@ -32,7 +33,12 @@
     $("toggleSpeech").textContent = speechEnabled ? "Озвучка: ВКЛ" : "Озвучка: ВЫКЛ";
     $("toggleSpeech").setAttribute("aria-pressed", speechEnabled ? "true" : "false");
   }
+  function updateRecognitionButton() {
+    $("toggleRecognition").textContent = recognitionEnabled ? "Распознавание: ВКЛ" : "Распознавание: ВЫКЛ";
+    $("toggleRecognition").setAttribute("aria-pressed", recognitionEnabled ? "true" : "false");
+  }
   updateSpeechButton();
+  updateRecognitionButton();
 
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   function updateRoi() {
@@ -437,6 +443,11 @@
     loopRunning = true;
 
     while (scanning) {
+      if (!recognitionEnabled) {
+        $("ocrState").textContent = "Распознавание остановлено";
+        await wait(200);
+        continue;
+      }
       // Never exit the scan loop just because the camera is between video frames.
       if (!worker || video.readyState < 2 || !video.videoWidth) {
         $("ocrState").textContent = "Жду кадр камеры…";
@@ -612,6 +623,20 @@
     $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
     document.body.classList.remove("running");
     setStatus("Остановлено");
+  });
+
+  $("toggleRecognition").addEventListener("click", () => {
+    recognitionEnabled = !recognitionEnabled;
+    previousCandidate = "";
+    candidateCount = 0;
+    consecutiveEmptyReads = 0;
+    updateRecognitionButton();
+    $("ocrState").textContent = recognitionEnabled
+      ? (scanning ? "Распознавание включено" : "Ожидание")
+      : "Распознавание остановлено";
+    if (recognitionEnabled && scanning) {
+      $("lastText").textContent = "Жду новые субтитры…";
+    }
   });
 
   $("toggleSpeech").addEventListener("click", () => {
