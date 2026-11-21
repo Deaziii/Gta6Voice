@@ -32,3 +32,29 @@ body:not(.running) .guide{display:none}
 .guide{top:var(--roi-top,40%);height:var(--roi-height,20%)}
 .guide span{top:3px}
 .ocr-inline .last-text{text-align:center;justify-content:center}
+
+
+/* v0.12: all controls live below the camera in collapsible settings */
+.quick-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0 14px}
+.quick-controls button{width:100%;min-width:0;margin:0}
+.quick-controls .speech-toggle{background:#33432b;border-color:#607b43;color:#eaffcf}
+.quick-controls .speech-toggle[aria-pressed="false"]{background:#303946;border-color:var(--line);color:#fff}
+.settings-area{margin-top:14px}
+.settings-title{font-size:15px;margin:0 0 9px}
+.settings-group{margin:8px 0;border:1px solid var(--line);border-radius:11px;background:#11161d;overflow:hidden}
+.settings-group>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:53px;padding:10px 12px;cursor:pointer;list-style:none}
+.settings-group>summary::-webkit-details-marker{display:none}
+.settings-group>summary:after{content:"＋";color:var(--accent);font-size:18px;line-height:1;flex:none}
+.settings-group[open]>summary:after{content:"−"}
+.settings-group>summary span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.settings-group>summary b{font-size:12px;color:#eef2f7}
+.settings-group>summary small{font-size:10px;color:var(--muted);font-weight:400}
+.settings-group>summary output{font-size:11px;color:var(--accent);white-space:nowrap}
+.settings-content{padding:0 12px 12px;border-top:1px solid #28313d}
+.settings-content>.range-label:first-child{margin-top:12px}
+.settings-content .hint{margin-top:7px}
+.settings-content .debug-ocr{margin-top:10px}
+.settings-content .stats{margin-top:12px}
+.settings-content .check{margin:12px 0 5px}
+.camera-panel>.hint{margin-top:12px}
+@media(max-width:360px){.quick-controls{grid-template-columns:1fr}}
