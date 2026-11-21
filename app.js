@@ -256,32 +256,64 @@
   const RUSSIAN_VOWELS = /[аеёиоуыэюя]/i;
   const RUSSIAN_CONSONANT_RUN = /[бвгджзйклмнпрстфхцчшщ]{5,}/i;
 
-  function inspectRussianLine(line, confidence) {
-    const source = clean(line);
-    if (!source) return { accepted: false, reason: "пустая строка", text: "" };
-    if (Number.isFinite(confidence) && confidence < 18) {
-      return { accepted: false, reason: "уверенность OCR ниже 18%", text: "" };
+  function isRussianSubtitleLine(line, confidence) {
+    const value = clean(line);
+    const letters = value.match(/[A-Za-zА-Яа-яЁё]/g) || [];
+    const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
+    if (cyrillic.length < 2 || !letters.length) return false;
+    if (cyrillic.length / letters.length < 0.82) return false;
+    if (Number.isFinite(confidence) && confidence < 30) return false;
+    const words = value.split(/\s+/).filter(Boolean);
+    const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
+    if (tinyWords > 2 || tinyWords / Math.max(1, words.length) > 0.3) return false;
+    if (!/[аеёиоуыэюя]/i.test(value)) return false;
+    return true;
+  }
+
+  function parseSubtitle(data) {
+    const namePattern = /^(Jason|Lucia|Tourist)\s*[:：-]?\s*/i;
+    const lines = Array.isArray(data.lines) && data.lines.length
+      ? data.lines.map(line => ({ text: clean(line.text), confidence: Number(line.confidence) }))
+      : (data.text || "").split(/\r?\n/).map(text => ({ text: clean(text), confidence: Number(data.confidence) }));
+
+    let speaker = "";
+    const accepted = [];
+    const report = [];
+    for (const line of lines) {
+      if (!line.text) continue;
+      let lineText = line.text;
+      if ($("showNames").checked) {
+        const match = lineText.match(namePattern);
+        if (match) {
+          speaker = match[1];
+          lineText = clean(lineText.slice(match[0].length));
+          if (!lineText) {
+            report.push("NAME · " + line.text);
+            continue;
+          }
+        }
+      }
+      const ok = isRussianSubtitleLine(lineText, line.confidence);
+      report.push((ok ? "OK" : "SKIP") + " [" +
+        (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") +
+        "%] " + line.text);
+      if (ok) accepted.push({ text: lineText, confidence: line.confidence });
     }
 
-    // Не проверяем каждое слово по эвристикам: они отбрасывали настоящие
-    // разговорные слова и короткие фразы. Основная защита теперь — зона OCR
-    // и совпадение реплики на двух последовательных кадрах.
-    const text = source
-      .replace(/\\b(?:Jason|Lucia|Tourist)\\b\\s*[:：-]?/gi, "")
-      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\\-]/g, "")
-      .replace(/\\s+/g, " ")
-      .trim();
-
-    const russianLetters = text.match(/[А-Яа-яЁё]/g) || [];
-    const lettersAndDigits = text.match(/[А-Яа-яЁё0-9]/g) || [];
+    const text = clean(accepted.map(line => line.text).join(" "))
+      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\-]/g, "")
+      .replace(/\s+/g, " ").trim();
     if (text.length < 2 || text.length > 180) {
-      return { accepted: false, reason: "неподходящая длина строки", text: "" };
+      return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
     }
-    if (russianLetters.length < 2 || russianLetters.length / Math.max(1, lettersAndDigits.length) < 0.55) {
-      return { accepted: false, reason: "мало русского текста", text: "" };
-    }
-
-    return { accepted: true, reason: "русский текст", text };
+    const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
+    const confidence = confidences.length
+      ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+      : Number(data.confidence) || 0;
+    return {
+      subtitle: { text, speaker, confidence },
+      report: report.join("\n")
+    };
   }
 
   function similarCaption(a, b) {
@@ -355,11 +387,11 @@
     const height = video.videoHeight;
     if (!width || !height) return null;
 
-    canvas.width = Math.min(960, width);
+    canvas.width = Math.min(1280, width);
     canvas.height = Math.round(height * canvas.width / width);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Crop exactly the same percentage rectangle that is visible over the camera.
+    // Same v0.10 image scale and contrast, using the current movable frame coordinates.
     const cropX = Math.floor(canvas.width * Number($("roiLeft").value) / 100);
     const cropY = Math.floor(canvas.height * Number($("roiTop").value) / 100);
     const cropWidth = Math.min(
@@ -373,8 +405,8 @@
     if (cropHeight < 10) return null;
 
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 1.35);
-    processed.height = Math.round(cropHeight * 1.35);
+    processed.width = Math.round(cropWidth * 1.8);
+    processed.height = Math.round(cropHeight * 1.8);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
     pctx.filter = "grayscale(1) contrast(1.35)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
@@ -446,14 +478,9 @@
           }
 
           const isNewPhrase = key !== lastEnqueuedKey;
-          // Чем ниже уверенность OCR, тем больше независимых кадров требуем
-          // перед озвучкой. Очень сомнительные результаты не произносим.
-          const confidence = Number(subtitle.confidence) || 0;
-          const requiredReads = confidence >= 55 ? 2 : confidence >= 35 ? 3 : 4;
-          const stableOrClear = candidateCount >= requiredReads;
-          const confidenceAcceptable = confidence >= 25;
+          const stableOrClear = candidateCount >= 2 || subtitle.confidence >= 68;
 
-          if (isNewPhrase && stableOrClear && confidenceAcceptable) {
+          if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
             queue.push(subtitle);
             setQueueCount();
@@ -476,7 +503,7 @@
             await worker.setParameters({
               tessedit_pageseg_mode: "6",
               preserve_interword_spaces: "1",
-              tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- JasonLuciaTourist"
+              tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- JasonLuciaTourist "
             });
             consecutiveOcrErrors = 0;
           } catch (restartError) {
@@ -486,8 +513,7 @@
       }
 
       // Не молотим OCR без остановки: на пустых/посторонних кадрах делаем длинную паузу.
-      const nextDelay = consecutiveEmptyReads >= 2 ? 1700 : 650;
-      await wait(nextDelay);
+      await wait(180);
     }
 
     loopRunning = false;
@@ -502,7 +528,7 @@
     await newWorker.setParameters({
       tessedit_pageseg_mode: "6",
       preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()-"
+      tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- "
     });
     return newWorker;
   }
