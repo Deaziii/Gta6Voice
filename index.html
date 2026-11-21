@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101319">
+  <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
+  <title>GTA6 Voice</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <div class="brand"><span class="mark">G</span><div><h1>GTA6 Voice</h1><p>Слышь субтитры, а не читай их</p></div></div>
+      <span id="status" class="status">Готов</span>
+    </header>
+
+    <section class="panel camera-panel">
+      <div class="section-head"><div><h2>Камера</h2><p>Направь заднюю камеру на экран с субтитрами</p></div><span class="live-dot" id="liveDot"></span></div>
+      <div class="video-wrap">
+        <video id="camera" autoplay muted playsinline></video>
+        <div class="guide"><span>Область субтитров</span></div>
+        <div id="placeholder" class="placeholder"><div class="camera-icon">◎</div><b>Камера выключена</b><small>Лучше поставить телефон неподвижно напротив экрана</small></div>
+      </div>
+      <div class="buttons">
+        <button id="startCamera" class="primary">Включить камеру</button>
+        <button id="stopCamera" disabled>Остановить</button>
+      </div>
+      <p class="hint">Разреши доступ к камере. Страница должна быть открыта через HTTPS. Звук пойдёт с телефона или подключённой к нему колонки.</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><h2>Озвучка</h2><span id="speechState" class="muted">Отключена</span></div>
+      <div class="buttons">
+        <button id="toggleSpeech" disabled>Остановить озвучку</button>
+        <button id="testSpeech" class="secondary">Тест голоса</button>
+      </div>
+      <label class="range-label"><span>Скорость</span><output id="rateValue">1.00×</output><input id="rate" type="range" min="0.85" max="1.35" step="0.05" value="1"></label>
+      <label class="range-label"><span>Громкость</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
+      <label class="check"><input id="showNames" type="checkbox" checked><span>Распознавать Jason / Lucia / Tourist в субтитрах</span></label>
+      <div class="voice-grid">
+        <label>Обычный голос<select id="defaultVoice"><option value="">Русский голос Android по умолчанию</option></select></label>
+        <label>Jason<select id="jasonVoice"><option value="">Автоматически</option></select></label>
+        <label>Lucia<select id="luciaVoice"><option value="">Автоматически</option></select></label>
+      </div>
+      <p class="hint">Список голосов зависит от Android и установленного движка синтеза речи. Если в телефоне один русский голос, оба героя будут звучать одинаково.</p>
+    </section>
+
+    <section class="panel">
+      <div class="section-head"><h2>Распознанный текст</h2><span class="pill" id="ocrState">Ожидание</span></div>
+      <div id="lastText" class="last-text">Здесь появится реплика из игры…</div>
+      <div class="stats"><span>Очередь: <b id="queueState">0</b></span><span>Последнее распознавание: <b id="latency">—</b></span></div>
+    </section>
+
+    <section class="panel manual">
+      <h2>Проверка вручную</h2>
+      <textarea id="manualText" rows="2" placeholder="Введи фразу, чтобы проверить русский голос…">Как дела? Поехали!</textarea>
+      <button id="speakManual" class="secondary full">Произнести текст</button>
+    </section>
+
+    <footer>GTA6 Voice · прототип 0.1 · распознавание может ошибаться на бликах и движении</footer>
+  </main>
+  <canvas id="frame" hidden></canvas>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
