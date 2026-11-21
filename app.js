@@ -259,6 +259,9 @@
   function inspectRussianLine(line, confidence) {
     const source = clean(line);
     if (!source) return { accepted: false, reason: "пустая строка", text: "" };
+    if (Number.isFinite(confidence) && confidence < 18) {
+      return { accepted: false, reason: "уверенность OCR ниже 18%", text: "" };
+    }
 
     // Не проверяем каждое слово по эвристикам: они отбрасывали настоящие
     // разговорные слова и короткие фразы. Основная защита теперь — зона OCR
@@ -301,6 +304,7 @@
 
     let speaker = "";
     const accepted = [];
+    const acceptedConfidences = [];
     const report = [];
 
     for (const line of lines) {
@@ -324,7 +328,10 @@
         " [" + (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") + "%] " +
         (inspected.accepted ? inspected.text : line.text + " — " + inspected.reason)
       );
-      if (inspected.accepted) accepted.push(inspected.text);
+      if (inspected.accepted) {
+        accepted.push(inspected.text);
+        if (Number.isFinite(line.confidence)) acceptedConfidences.push(line.confidence);
+      }
     }
 
     const text = clean(accepted.join(" "))
@@ -333,9 +340,8 @@
 
     if (!text) return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
 
-    const confidences = lines.map(line => line.confidence).filter(Number.isFinite);
-    const confidence = confidences.length
-      ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+    const confidence = acceptedConfidences.length
+      ? acceptedConfidences.reduce((sum, value) => sum + value, 0) / acceptedConfidences.length
       : Number(data.confidence) || 0;
 
     return {
@@ -404,7 +410,15 @@
           continue;
         }
 
-        const result = await worker.recognize(image);
+        let result = await worker.recognize(image);
+        const firstConfidence = Number(result.data.confidence) || 0;
+        // Retry sparse-text layout only when normal block recognition is weak.
+        if (firstConfidence < 35) {
+          await worker.setParameters({ tessedit_pageseg_mode: "11" });
+          const alternate = await worker.recognize(image);
+          await worker.setParameters({ tessedit_pageseg_mode: "6" });
+          if ((Number(alternate.data.confidence) || 0) > firstConfidence) result = alternate;
+        }
         consecutiveOcrErrors = 0;
         const raw = clean(result.data.text || "");
         $("rawText").textContent = raw || "Внутри рамки нет распознанного текста.";
@@ -421,6 +435,12 @@
           emptyCaptionReads++;
           consecutiveEmptyReads++;
           if (emptyCaptionReads >= 2) lastEnqueuedKey = "";
+        } else if ((Number(subtitle.confidence) || 0) < 18) {
+          $("ocrState").textContent = "Слабое распознавание — повторяю";
+          $("lastText").textContent = "Пока не удалось уверенно прочитать субтитры.";
+          previousCandidate = "";
+          candidateCount = 0;
+          consecutiveEmptyReads++;
         } else {
           $("ocrState").textContent = "Субтитры найдены";
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
