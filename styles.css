@@ -61,3 +61,42 @@ body:not(.running) .guide{display:none}
 
 .speech-status{margin:0 0 12px;color:var(--muted);font-size:11px}
 .speech-status span{color:#d8e4cb}
+
+
+/* v0.15: touch-editable OCR selection frame */
+.video-wrap{touch-action:pan-y}
+.guide{
+  left:var(--roi-left,8%);
+  width:var(--roi-width,84%);
+  right:auto;
+  pointer-events:auto;
+  touch-action:none;
+  cursor:grab;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.guide.dragging{cursor:grabbing;background:#c3f36b24}
+.guide .guide-label{pointer-events:none;z-index:2}
+.roi-handle{
+  position:absolute;
+  display:block;
+  width:18px;
+  height:18px;
+  border:2px solid #17200e;
+  border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 0 1px #d9ff9a,0 1px 5px #0009;
+  transform:translate(-50%,-50%);
+  z-index:3;
+  touch-action:none;
+}
+.roi-handle.nw{left:0;top:0;cursor:nw-resize}
+.roi-handle.n{left:50%;top:0;cursor:n-resize}
+.roi-handle.ne{left:100%;top:0;cursor:ne-resize}
+.roi-handle.e{left:100%;top:50%;cursor:e-resize}
+.roi-handle.se{left:100%;top:100%;cursor:se-resize}
+.roi-handle.s{left:50%;top:100%;cursor:s-resize}
+.roi-handle.sw{left:0;top:100%;cursor:sw-resize}
+.roi-handle.w{left:0;top:50%;cursor:w-resize}
+.guide.dragging .roi-handle{background:#f3ffd6}
+.settings-content .range-label{margin:12px 0}
