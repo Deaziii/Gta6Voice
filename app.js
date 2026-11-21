@@ -490,24 +490,30 @@
       } catch (error) {
         consecutiveOcrErrors++;
         console.error("OCR error", error);
-        $("ocrState").textContent = "Повторяю сканирование…";
-        $("lastText").textContent = "Ошибка OCR — цикл продолжится автоматически.";
-        if (consecutiveOcrErrors >= 4 && scanning) {
+        const errorText = error && error.message ? error.message : String(error);
+        $("ocrState").textContent = "Ошибка OCR · повторяю";
+        $("lastText").textContent = "Сбой распознавания: " + errorText;
+        if (consecutiveOcrErrors >= 2 && scanning) {
+          $("ocrState").textContent = "Перезапускаю OCR…";
           try {
-            if (worker) await worker.terminate();
-            worker = await Tesseract.createWorker("rus", 1, {
-              logger: message => {
-                if (message.status === "loading language traineddata") $("ocrState").textContent = "Перезапускаю русский OCR…";
+            const failedWorker = worker;
+            worker = null;
+            if (failedWorker) {
+              try { await failedWorker.terminate(); } catch (terminateError) {
+                console.warn("OCR worker terminate:", terminateError);
               }
-            });
-            await worker.setParameters({
-              tessedit_pageseg_mode: "6",
-              preserve_interword_spaces: "1",
-              tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- JasonLuciaTourist "
-            });
-            consecutiveOcrErrors = 0;
+            }
+            if (scanning) {
+              worker = await createOcrWorker();
+              consecutiveOcrErrors = 0;
+              $("ocrState").textContent = "OCR перезапущен";
+              $("lastText").textContent = "Распознавание восстановлено. Жду субтитры…";
+            }
           } catch (restartError) {
             console.error("OCR restart failed", restartError);
+            $("ocrState").textContent = "Не удалось перезапустить OCR";
+            $("lastText").textContent = "Ошибка перезапуска: " +
+              (restartError && restartError.message ? restartError.message : String(restartError));
           }
         }
       }
