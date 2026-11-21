@@ -235,6 +235,7 @@
       });
       video.srcObject = stream;
       await video.play();
+      $("videoWrap").classList.add("camera-active");
       $("placeholder").hidden = true;
       $("startCamera").disabled = true;
       $("stopCamera").disabled = false;
@@ -259,6 +260,7 @@
       $("lastText").textContent = "Ошибка: " + (error.message || String(error));
       if (stream) stream.getTracks().forEach(track => track.stop());
       stream = null;
+      $("videoWrap").classList.remove("camera-active");
     }
   });
 
@@ -267,6 +269,7 @@
     if (stream) stream.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
+    $("videoWrap").classList.remove("camera-active");
     if (worker) { await worker.terminate(); worker = null; }
     $("placeholder").hidden = false;
     $("startCamera").disabled = false;
