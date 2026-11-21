@@ -23,3 +23,5 @@
 
 ## Разработка
 Это статическое веб-приложение: `index.html`, `styles.css`, `app.js`. Публикация выполняется GitHub Actions workflow из `.github/workflows/pages.yml`.
+
+Последнее обновление: запуск повторной публикации GitHub Pages.
