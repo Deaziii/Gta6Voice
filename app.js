@@ -27,6 +27,11 @@
     .replace(/[^а-яёa-z0-9 ]/gi, "").replace(/\s+/g, " ").trim();
   const setStatus = value => { $("status").textContent = value; };
   const setQueueCount = () => { $("queueState").textContent = String(queue.length + (activeSpeech ? 1 : 0)); };
+  function updateSpeechButton() {
+    $("toggleSpeech").textContent = speechEnabled ? "Озвучка: ВКЛ" : "Озвучка: ВЫКЛ";
+    $("toggleSpeech").setAttribute("aria-pressed", speechEnabled ? "true" : "false");
+  }
+  updateSpeechButton();
 
   function updateRoi() {
     const top = Number($("roiTop").value);
@@ -445,8 +450,7 @@
 
   $("startCamera").addEventListener("click", async () => {
     audioUnlocked = true;
-    speechEnabled = true;
-    $("toggleSpeech").textContent = "Остановить озвучку";
+    updateSpeechButton();
     if ("speechSynthesis" in window) {
       try { speechSynthesis.resume(); } catch (_) {}
     }
@@ -466,8 +470,7 @@
       $("placeholder").hidden = true;
       $("startCamera").disabled = true;
       $("stopCamera").disabled = false;
-      $("toggleSpeech").disabled = false;
-      $("speechState").textContent = "Озвучка готова";
+      $("speechState").textContent = speechEnabled ? "Озвучка готова" : "Остановлена";
       setStatus("Загрузка OCR…");
       $("ocrState").textContent = "Загрузка русского OCR…";
 
@@ -505,7 +508,6 @@
     $("placeholder").hidden = false;
     $("startCamera").disabled = false;
     $("stopCamera").disabled = true;
-    $("toggleSpeech").disabled = true;
     $("ocrState").textContent = "Остановлено";
     $("speechState").textContent = "Остановлена";
     document.body.classList.remove("running");
@@ -513,14 +515,17 @@
   });
 
   $("toggleSpeech").addEventListener("click", () => {
+    audioUnlocked = true;
     speechEnabled = !speechEnabled;
+    updateSpeechButton();
     if (!speechEnabled) {
       cancelSpeechAndQueue();
-      $("toggleSpeech").textContent = "Включить озвучку";
       $("speechState").textContent = "Остановлена";
     } else {
-      $("toggleSpeech").textContent = "Остановить озвучку";
       $("speechState").textContent = "Включена";
+      if ("speechSynthesis" in window) {
+        try { speechSynthesis.resume(); } catch (_) {}
+      }
       pumpSpeechQueue();
     }
   });
@@ -529,8 +534,6 @@
     if (!("speechSynthesis" in window) || !text) return;
     audioUnlocked = true;
     cancelSpeechAndQueue();
-    speechEnabled = true;
-    $("toggleSpeech").textContent = "Остановить озвучку";
     activeSpeech = true;
     let done = false;
     const utterance = new SpeechSynthesisUtterance(text);
