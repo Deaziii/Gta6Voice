@@ -509,7 +509,7 @@
     $("startCamera").disabled = false;
     $("stopCamera").disabled = true;
     $("ocrState").textContent = "Остановлено";
-    $("speechState").textContent = "Остановлена";
+    $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
     document.body.classList.remove("running");
     setStatus("Остановлено");
   });
