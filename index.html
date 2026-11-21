@@ -25,7 +25,7 @@
       <details class="roi-controls">
         <summary><b>Настроить рамку субтитров</b><output id="roiLabel">40% / 20%</output></summary>
         <label class="range-label"><span>Положение сверху</span><output id="roiTopValue">40%</output><input id="roiTop" type="range" min="10" max="75" step="1" value="40"></label>
-        <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">20%</output><input id="roiHeight" type="range" min="10" max="35" step="1" value="20"></label>
+        <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">20%</output><input id="roiHeight" type="range" min="3" max="35" step="1" value="20"></label>
         <p class="hint">Подгони зелёную рамку под две строки субтитров. OCR читает только внутри неё.</p>
       </details>
       <section class="ocr-inline">
@@ -64,10 +64,10 @@
       <button id="speakManual" class="secondary full">Произнести текст</button>
     </section>
 
-    <footer>GTA6 Voice · прототип 0.9 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.10 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="./app.js?v=0.9"></script>
+  <script src="./app.js?v=0.10"></script>
 </body>
 </html>
