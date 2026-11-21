@@ -102,7 +102,8 @@
       canvas.width = Math.min(1280, width);
       canvas.height = Math.round(height * canvas.width / width);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const cropY = Math.floor(canvas.height * 0.52);
+      // Wider test area: includes centered labels during calibration and lower game subtitles.
+      const cropY = Math.floor(canvas.height * 0.22);
       const crop = document.createElement("canvas");
       crop.width = canvas.width;
       crop.height = canvas.height - cropY;
