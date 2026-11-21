@@ -33,17 +33,103 @@
   }
   updateSpeechButton();
 
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   function updateRoi() {
-    const top = Number($("roiTop").value);
-    const height = Number($("roiHeight").value);
+    let left = clamp(Number($("roiLeft").value), 0, 80);
+    let top = clamp(Number($("roiTop").value), 0, 80);
+    let width = clamp(Number($("roiWidth").value), 20, 100);
+    let height = clamp(Number($("roiHeight").value), 3, 70);
+    left = Math.min(left, 100 - width);
+    top = Math.min(top, 100 - height);
+
+    $("roiLeft").value = String(left);
+    $("roiTop").value = String(top);
+    $("roiWidth").value = String(width);
+    $("roiHeight").value = String(height);
+    $("roiLeft").max = String(100 - width);
+    $("roiTop").max = String(100 - height);
+
+    document.documentElement.style.setProperty("--roi-left", left + "%");
+    document.documentElement.style.setProperty("--roi-width", width + "%");
     document.documentElement.style.setProperty("--roi-top", top + "%");
     document.documentElement.style.setProperty("--roi-height", height + "%");
+    $("roiLeftValue").textContent = left + "%";
     $("roiTopValue").textContent = top + "%";
+    $("roiWidthValue").textContent = width + "%";
     $("roiHeightValue").textContent = height + "%";
-    $("roiLabel").textContent = top + "% / " + height + "%";
+    $("roiLabel").textContent = "X " + left + "% · Y " + top + "% · " + width + "% × " + height + "%";
   }
-  $("roiTop").addEventListener("input", updateRoi);
-  $("roiHeight").addEventListener("input", updateRoi);
+  ["roiLeft", "roiTop", "roiWidth", "roiHeight"].forEach(id => {
+    $(id).addEventListener("input", updateRoi);
+  });
+
+  let roiPointer = null;
+  const guide = $("guide");
+  guide.addEventListener("pointerdown", event => {
+    if (event.button !== undefined && event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.target.closest("[data-handle]")?.dataset.handle || "";
+    roiPointer = {
+      id: event.pointerId,
+      mode: handle || "move",
+      startX: event.clientX,
+      startY: event.clientY,
+      rect: $("videoWrap").getBoundingClientRect(),
+      left: Number($("roiLeft").value),
+      top: Number($("roiTop").value),
+      width: Number($("roiWidth").value),
+      height: Number($("roiHeight").value)
+    };
+    guide.classList.add("dragging");
+    try { guide.setPointerCapture(event.pointerId); } catch (_) {}
+  });
+
+  guide.addEventListener("pointermove", event => {
+    if (!roiPointer || roiPointer.id !== event.pointerId) return;
+    event.preventDefault();
+    const dx = (event.clientX - roiPointer.startX) / Math.max(1, roiPointer.rect.width) * 100;
+    const dy = (event.clientY - roiPointer.startY) / Math.max(1, roiPointer.rect.height) * 100;
+    let left = roiPointer.left;
+    let top = roiPointer.top;
+    let right = left + roiPointer.width;
+    let bottom = top + roiPointer.height;
+
+    if (roiPointer.mode === "move") {
+      left = clamp(roiPointer.left + dx, 0, 100 - roiPointer.width);
+      top = clamp(roiPointer.top + dy, 0, 100 - roiPointer.height);
+    } else {
+      if (roiPointer.mode.includes("w")) left = clamp(roiPointer.left + dx, 0, right - 20);
+      if (roiPointer.mode.includes("e")) right = clamp(roiPointer.left + roiPointer.width + dx, left + 20, 100);
+      if (roiPointer.mode.includes("n")) top = clamp(roiPointer.top + dy, 0, bottom - 3);
+      if (roiPointer.mode.includes("s")) bottom = clamp(roiPointer.top + roiPointer.height + dy, top + 3, 100);
+    }
+
+    if (roiPointer.mode !== "move") {
+      left = Math.round(left);
+      top = Math.round(top);
+      right = Math.round(right);
+      bottom = Math.round(bottom);
+      $("roiLeft").value = String(left);
+      $("roiTop").value = String(top);
+      $("roiWidth").value = String(Math.max(20, right - left));
+      $("roiHeight").value = String(Math.max(3, bottom - top));
+    } else {
+      $("roiLeft").value = String(Math.round(left));
+      $("roiTop").value = String(Math.round(top));
+    }
+    updateRoi();
+  });
+
+  function finishRoiPointer(event) {
+    if (!roiPointer || roiPointer.id !== event.pointerId) return;
+    roiPointer = null;
+    guide.classList.remove("dragging");
+    try {
+      if (guide.hasPointerCapture(event.pointerId)) guide.releasePointerCapture(event.pointerId);
+    } catch (_) {}
+  }
+  guide.addEventListener("pointerup", finishRoiPointer);
+  guide.addEventListener("pointercancel", finishRoiPointer);
   updateRoi();
 
   function refreshVoices() {
@@ -322,10 +408,13 @@
     canvas.height = Math.round(height * canvas.width / width);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Keep crop geometry identical to the visible green rectangle (8% margins).
-    const cropX = Math.floor(canvas.width * 0.08);
+    // Crop exactly the same percentage rectangle that is visible over the camera.
+    const cropX = Math.floor(canvas.width * Number($("roiLeft").value) / 100);
     const cropY = Math.floor(canvas.height * Number($("roiTop").value) / 100);
-    const cropWidth = Math.floor(canvas.width * 0.84);
+    const cropWidth = Math.min(
+      Math.floor(canvas.width * Number($("roiWidth").value) / 100),
+      canvas.width - cropX
+    );
     const cropHeight = Math.min(
       Math.floor(canvas.height * Number($("roiHeight").value) / 100),
       canvas.height - cropY
