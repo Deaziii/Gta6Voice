@@ -103,3 +103,7 @@ body:not(.running) .guide{display:none}
 
 .ocr-queue-stats{margin:8px 1px 0;padding:0 2px;gap:8px;flex-wrap:wrap;font-size:10px}
 .ocr-queue-stats span{white-space:nowrap}
+
+/* v0.18: recognition toggle state */
+.quick-controls .recognition-toggle{background:#33432b;border-color:#607b43;color:#eaffcf}
+.quick-controls .recognition-toggle[aria-pressed="false"]{background:#303946;border-color:var(--line);color:#fff}
