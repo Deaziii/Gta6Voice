@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101319">
   <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
   <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.3">
+  <link rel="stylesheet" href="./styles.css?v=0.4">
 </head>
 <body>
   <main class="app">
@@ -55,6 +55,7 @@
     <section class="panel">
       <div class="section-head"><h2>Распознанный текст</h2><span class="pill" id="ocrState">Ожидание</span></div>
       <div id="lastText" class="last-text">Здесь появится реплика из игры…</div>
+      <details class="debug-ocr"><summary>Что OCR реально увидел</summary><pre id="rawText">Пока нет данных</pre></details>
       <div class="stats"><span>Очередь: <b id="queueState">0</b></span><span>Последнее распознавание: <b id="latency">—</b></span></div>
     </section>
 
@@ -64,10 +65,10 @@
       <button id="speakManual" class="secondary full">Произнести текст</button>
     </section>
 
-    <footer>GTA6 Voice · прототип 0.2 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.4 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="./app.js?v=0.3"></script>
+  <script src="./app.js?v=0.4"></script>
 </body>
 </html>
