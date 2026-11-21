@@ -15,10 +15,11 @@
   let voices = [];
   let previousCandidate = "";
   let candidateCount = 0;
+  let lastEnqueuedKey = "";
+  let emptyCaptionReads = 0;
   let lastScanAt = 0;
   let consecutiveOcrErrors = 0;
   const queue = [];
-  const recentSpoken = new Map();
 
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
   const clean = value => (value || "").replace(/[|_]/g, " ").replace(/\s+/g, " ").trim();
@@ -257,9 +258,12 @@
           $("lastText").textContent = "Пока нет чистой русской реплики.";
           previousCandidate = "";
           candidateCount = 0;
+          emptyCaptionReads++;
+          if (emptyCaptionReads >= 2) lastEnqueuedKey = "";
         } else {
           $("ocrState").textContent = "Субтитры найдены";
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
+          emptyCaptionReads = 0;
           const key = normalize(subtitle.text);
           if (key === previousCandidate) candidateCount++;
           else {
@@ -267,13 +271,11 @@
             candidateCount = 1;
           }
 
-          const now = Date.now();
-          const lastTime = recentSpoken.get(key) || 0;
-          const isNewPhrase = now - lastTime > 4500;
+          const isNewPhrase = key !== lastEnqueuedKey;
           const stableOrClear = candidateCount >= 2 || subtitle.confidence >= 68;
 
           if (isNewPhrase && stableOrClear) {
-            recentSpoken.set(key, now);
+            lastEnqueuedKey = key;
             queue.push(subtitle);
             setQueueCount();
             pumpSpeechQueue();
@@ -295,7 +297,7 @@
             await worker.setParameters({
               tessedit_pageseg_mode: "6",
               preserve_interword_spaces: "1",
-              tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- "
+              tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- JasonLuciaTourist"
             });
             consecutiveOcrErrors = 0;
           } catch (restartError) {
@@ -327,6 +329,8 @@
 
   $("startCamera").addEventListener("click", async () => {
     audioUnlocked = true;
+    speechEnabled = true;
+    $("toggleSpeech").textContent = "Остановить озвучку";
     if ("speechSynthesis" in window) {
       try { speechSynthesis.resume(); } catch (_) {}
     }
@@ -380,6 +384,7 @@
       worker = null;
       try { await oldWorker.terminate(); } catch (_) {}
     }
+    while (loopRunning) await wait(40);
     cancelSpeechAndQueue();
     $("placeholder").hidden = false;
     $("startCamera").disabled = false;
