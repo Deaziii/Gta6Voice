@@ -5,22 +5,25 @@
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   let stream = null, worker = null, scanning = false, busy = false;
   let speechEnabled = true, audioUnlocked = false;
-  let previousCandidate = "", candidateCount = 0, lastSpoken = "";
-  let lastScanAt = 0;
+  let previousCandidate = "", candidateCount = 0, lastSpokenKey = "", lastSpokenAt = 0;
+  let lastScanAt = 0, voices = [];
   const queue = [];
-  let voices = [];
 
   const clean = value => (value || "").replace(/[|_]/g, " ").replace(/\s+/g, " ").trim();
-  const setStatus = value => { $("status").textContent = value; };
   const normalize = value => clean(value).toLocaleLowerCase("ru-RU").replace(/[^а-яёa-z0-9 ]/gi, "").replace(/\s+/g, " ").trim();
+  const setStatus = value => { $("status").textContent = value; };
 
-  function similarity(a, b) {
-    if (!a || !b) return 0;
-    if (a === b) return 1;
-    const aa = a.split(" "), bb = b.split(" ");
-    const common = aa.filter(word => bb.includes(word)).length;
-    return common / Math.max(aa.length, bb.length);
+  function updateRoi() {
+    const top = Number($("roiTop").value), height = Number($("roiHeight").value);
+    document.documentElement.style.setProperty("--roi-top", top + "%");
+    document.documentElement.style.setProperty("--roi-height", height + "%");
+    $("roiTopValue").textContent = top + "%";
+    $("roiHeightValue").textContent = height + "%";
+    $("roiLabel").textContent = top + "% / " + height + "%";
   }
+  $("roiTop").addEventListener("input", updateRoi);
+  $("roiHeight").addEventListener("input", updateRoi);
+  updateRoi();
 
   function refreshVoices() {
     voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
@@ -50,15 +53,16 @@
 
   function voiceFor(speaker) {
     const id = /lucia/i.test(speaker) ? "luciaVoice" : /jason/i.test(speaker) ? "jasonVoice" : "defaultVoice";
-    const requested = $(id).value || (id !== "defaultVoice" ? $("defaultVoice").value : "");
-    if (requested) return voices[Number(requested)] || null;
-    const russian = voices.filter(voice => /^ru/i.test(voice.lang));
-    return russian[0] || null;
+    const chosen = $(id).value || (id !== "defaultVoice" ? $("defaultVoice").value : "");
+    if (chosen) return voices[Number(chosen)] || null;
+    return voices.find(voice => /^ru/i.test(voice.lang)) || null;
   }
 
   function speak(text, speaker = "", onDone = () => {}) {
     if (!("speechSynthesis" in window)) {
       $("speechState").textContent = "Нет TTS в браузере";
+      $("lastText").textContent = "Браузер не поддерживает системную озвучку.";
+      onDone();
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
@@ -68,14 +72,21 @@
     const voice = voiceFor(speaker);
     if (voice) utterance.voice = voice;
     utterance.onstart = () => { $("speechState").textContent = "Говорит"; };
-    utterance.onend = () => { $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена"; onDone(); };
+    utterance.onend = () => {
+      $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
+      onDone();
+    };
     utterance.onerror = event => {
-      console.warn("TTS error", event);
-      $("speechState").textContent = "Ошибка озвучки";
+      console.warn("Speech synthesis error", event);
+      $("speechState").textContent = "Ошибка TTS";
       onDone();
     };
     try { speechSynthesis.speak(utterance); }
-    catch (error) { console.error(error); $("speechState").textContent = "Ошибка озвучки"; onDone(); }
+    catch (error) {
+      console.error(error);
+      $("speechState").textContent = "Ошибка TTS";
+      onDone();
+    }
   }
 
   function playQueue() {
@@ -85,44 +96,57 @@
     speak(item.text, item.speaker, playQueue);
   }
 
-  function validRussianSubtitle(text, confidence) {
-    const value = clean(text);
+  function unlockSpeechFromTap() {
+    if (!("speechSynthesis" in window)) return;
+    audioUnlocked = true;
+    speechSynthesis.cancel();
+    // The user tap on Start Camera / Test Voice authorizes speech playback in mobile browsers.
+    const warmup = new SpeechSynthesisUtterance(" ");
+    warmup.lang = "ru-RU";
+    warmup.volume = 0;
+    speechSynthesis.speak(warmup);
+    refreshVoices();
+  }
+
+  function isRussianLine(line, confidence) {
+    const value = clean(line);
     const letters = value.match(/[A-Za-zА-Яа-яЁё]/g) || [];
-    const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
+    const cyr = value.match(/[А-Яа-яЁё]/g) || [];
+    if (cyr.length < 4 || !letters.length) return false;
+    if (cyr.length / letters.length < 0.86) return false;
+    if (Number.isFinite(confidence) && confidence < 24) return false;
     const words = value.split(/\s+/).filter(Boolean);
-    const substantial = words.filter(word => (word.match(/[А-Яа-яЁёA-Za-z]/g) || []).length >= 3);
-    const oneLetter = words.filter(word => /^[А-Яа-яЁёA-Za-z]$/i.test(word)).length;
-    if (value.length < 5 || value.length > 220) return false;
-    if (letters.length < 5 || cyrillic.length / letters.length < 0.72) return false;
-    if (substantial.length < 2) return false;
-    if (oneLetter > 1 || oneLetter / words.length > 0.18) return false;
-    if (Number.isFinite(confidence) && confidence < 48) return false;
+    const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
+    if (tinyWords > 2 || tinyWords / Math.max(1, words.length) > 0.28) return false;
     return true;
   }
 
-  function parseSubtitle(rawText, confidence) {
-    const lines = (rawText || "").split(/\r?\n/).map(clean).filter(Boolean);
-    const useful = lines.filter(line => /[А-Яа-яЁё]/.test(line));
-    if (!useful.length) return null;
+  function parseSubtitle(data) {
     const namePattern = /^(Jason|Lucia|Tourist)\s*[:：-]?\s*/i;
+    const rawLines = Array.isArray(data.lines) && data.lines.length
+      ? data.lines.map(line => ({ text: clean(line.text), confidence: Number(line.confidence) }))
+      : (data.text || "").split(/\r?\n/).map(text => ({ text: clean(text), confidence: Number(data.confidence) }));
     let speaker = "";
-    let text = useful.join(" ");
-    if ($("showNames").checked) {
-      const joined = useful.join(" ");
-      const match = joined.match(namePattern);
-      if (match) { speaker = match[1]; text = joined.slice(match[0].length); }
-      else {
-        const index = useful.findIndex(line => namePattern.test(line));
-        if (index >= 0) {
-          speaker = useful[index].match(namePattern)[1];
-          useful[index] = useful[index].replace(namePattern, "");
-          text = useful.filter(Boolean).join(" ");
+    const accepted = [];
+    for (const line of rawLines) {
+      if (!line.text) continue;
+      if ($("showNames").checked) {
+        const match = line.text.match(namePattern);
+        if (match) {
+          speaker = match[1];
+          const rest = clean(line.text.slice(match[0].length));
+          if (!rest) continue;
+          line.text = rest;
         }
       }
+      if (isRussianLine(line.text, line.confidence)) accepted.push(line);
     }
-    text = clean(text).replace(/[^А-Яа-яЁёA-Za-z0-9 .,!?…:;()'’\-]/g, "").trim();
-    if (!validRussianSubtitle(text, confidence)) return null;
-    return { text, speaker, confidence: Number(confidence) || 0 };
+    let text = clean(accepted.map(line => line.text).join(" "));
+    text = text.replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\-]/g, "").replace(/\s+/g, " ").trim();
+    if (text.length < 3 || text.length > 180) return null;
+    const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
+    const confidence = confidences.length ? confidences.reduce((a,b) => a+b, 0) / confidences.length : Number(data.confidence) || 0;
+    return { text, speaker, confidence };
   }
 
   async function scanOnce() {
@@ -138,59 +162,64 @@
       canvas.height = Math.round(height * canvas.width / width);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // GTA dialogue subtitles are normally close to the bottom edge.
-      // Ignore most of the scene and scan only the lower central strip.
-      const cropX = Math.floor(canvas.width * 0.06);
-      const cropY = Math.floor(canvas.height * 0.70);
-      const cropWidth = Math.floor(canvas.width * 0.88);
-      const cropHeight = Math.floor(canvas.height * 0.27);
-      const crop = document.createElement("canvas");
-      crop.width = cropWidth;
-      crop.height = cropHeight;
-      const cropCtx = crop.getContext("2d", { willReadFrequently: true });
-      cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+      // OCR uses exactly the rectangle drawn over the live camera preview.
+      const cropX = Math.floor(canvas.width * 0.08);
+      const cropY = Math.floor(canvas.height * Number($("roiTop").value) / 100);
+      const cropWidth = Math.floor(canvas.width * 0.84);
+      const cropHeight = Math.min(Math.floor(canvas.height * Number($("roiHeight").value) / 100), canvas.height - cropY);
+      if (cropHeight < 24) return;
 
-      // Enlarge and boost contrast to help small projected captions.
       const processed = document.createElement("canvas");
-      processed.width = cropWidth * 2;
-      processed.height = cropHeight * 2;
+      processed.width = Math.round(cropWidth * 1.6);
+      processed.height = Math.round(cropHeight * 1.6);
       const pctx = processed.getContext("2d", { willReadFrequently: true });
-      pctx.filter = "grayscale(1) contrast(1.7)";
-      pctx.drawImage(crop, 0, 0, processed.width, processed.height);
+      pctx.filter = "grayscale(1) contrast(1.65)";
+      pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
       pctx.filter = "none";
 
       const result = await worker.recognize(processed);
-      const subtitle = parseSubtitle(result.data.text, result.data.confidence);
+      const subtitle = parseSubtitle(result.data);
       $("latency").textContent = Math.round(performance.now() - started) + " мс OCR";
-      $("ocrState").textContent = "Активно";
 
       if (!subtitle) {
+        $("ocrState").textContent = "Нет чистой реплики";
+        $("lastText").textContent = "В рамке не найдено достаточно чистого русского текста. Передвинь рамку точно на субтитры.";
         previousCandidate = "";
         candidateCount = 0;
         return;
       }
 
-      $("lastText").textContent = subtitle.text;
+      $("ocrState").textContent = "Реплика найдена";
+      $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
       const key = normalize(subtitle.text);
-      if (similarity(key, previousCandidate) >= 0.78) candidateCount++;
+      if (key === previousCandidate) candidateCount++;
       else { previousCandidate = key; candidateCount = 1; }
 
-      if (candidateCount >= 2 && similarity(key, lastSpoken) < 0.82) {
-        lastSpoken = key;
+      const repeatedRecently = key === lastSpokenKey && Date.now() - lastSpokenAt < 12000;
+      const enoughConfidence = subtitle.confidence >= 42;
+      if (!repeatedRecently && (enoughConfidence || candidateCount >= 2)) {
+        lastSpokenKey = key;
+        lastSpokenAt = Date.now();
         queue.push(subtitle);
         $("queueState").textContent = String(queue.length);
-        playQueue();
+        if (!audioUnlocked) {
+          $("speechState").textContent = "Нажми «Тест голоса» один раз";
+        } else {
+          playQueue();
+        }
       }
     } catch (error) {
       console.error(error);
       $("ocrState").textContent = "Ошибка OCR";
+      $("lastText").textContent = "Ошибка распознавания: " + (error.message || String(error));
     } finally {
       busy = false;
-      if (scanning) window.setTimeout(scanOnce, 60);
+      if (scanning) window.setTimeout(scanOnce, 80);
     }
   }
 
   $("startCamera").addEventListener("click", async () => {
+    unlockSpeechFromTap();
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error("Открой страницу через HTTPS в Chrome и разреши камеру.");
       setStatus("Запуск камеры…");
@@ -204,14 +233,16 @@
       $("startCamera").disabled = true;
       $("stopCamera").disabled = false;
       $("toggleSpeech").disabled = false;
-      $("speechState").textContent = audioUnlocked ? "Включена" : "Нажми «Тест голоса»";
+      $("speechState").textContent = "Озвучка готова";
       setStatus("Загрузка OCR…");
-      $("ocrState").textContent = "Загрузка языка…";
-      worker = await Tesseract.createWorker("rus+eng", 1, {
+      $("ocrState").textContent = "Загрузка русского OCR…";
+      worker = await Tesseract.createWorker("rus", 1, {
         logger: message => {
-          if (message.status === "recognizing text") $("ocrState").textContent = "Читаю…";
+          if (message.status === "loading language traineddata") $("ocrState").textContent = "Загружаю русский язык…";
+          if (message.status === "recognizing text") $("ocrState").textContent = "Читаю рамку…";
         }
       });
+      await worker.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" });
       scanning = true;
       document.body.classList.add("running");
       setStatus("Камера работает");
@@ -244,7 +275,7 @@
     speechEnabled = !speechEnabled;
     if (!speechEnabled) {
       queue.length = 0;
-      speechSynthesis.cancel();
+      if ("speechSynthesis" in window) speechSynthesis.cancel();
       $("toggleSpeech").textContent = "Включить озвучку";
       $("speechState").textContent = "Остановлена";
     } else {
@@ -255,24 +286,20 @@
     $("queueState").textContent = String(queue.length);
   });
 
-  function unlockAndTest() {
-    if (!("speechSynthesis" in window)) {
-      $("speechState").textContent = "Нет TTS в браузере";
-      return;
-    }
-    audioUnlocked = true;
+  $("testSpeech").addEventListener("click", () => {
+    unlockSpeechFromTap();
     speechSynthesis.cancel();
-    refreshVoices();
-    speak("Проверка русского голоса. GTA шесть, слышишь меня?", "", () => playQueue());
-  }
-  $("testSpeech").addEventListener("click", unlockAndTest);
+    speak("Проверка русского голоса. GTA шесть, слышишь меня?");
+  });
+
   $("speakManual").addEventListener("click", () => {
     const text = clean($("manualText").value);
     if (!text) return;
-    audioUnlocked = true;
+    unlockSpeechFromTap();
     speechSynthesis.cancel();
     speak(text);
   });
+
   $("rate").addEventListener("input", event => $("rateValue").textContent = Number(event.target.value).toFixed(2) + "×");
   $("volume").addEventListener("input", event => $("volumeValue").textContent = Math.round(Number(event.target.value) * 100) + "%");
 })();
