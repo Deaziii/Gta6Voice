@@ -19,6 +19,7 @@
   let emptyCaptionReads = 0;
   let lastScanAt = 0;
   let consecutiveOcrErrors = 0;
+  let consecutiveEmptyReads = 0;
   const queue = [];
 
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
@@ -404,7 +405,7 @@
     const height = video.videoHeight;
     if (!width || !height) return null;
 
-    canvas.width = Math.min(1280, width);
+    canvas.width = Math.min(960, width);
     canvas.height = Math.round(height * canvas.width / width);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -422,8 +423,8 @@
     if (cropHeight < 10) return null;
 
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 1.8);
-    processed.height = Math.round(cropHeight * 1.8);
+    processed.width = Math.round(cropWidth * 1.35);
+    processed.height = Math.round(cropHeight * 1.35);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
     pctx.filter = "grayscale(1) contrast(1.35)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
@@ -467,11 +468,13 @@
           previousCandidate = "";
           candidateCount = 0;
           emptyCaptionReads++;
+          consecutiveEmptyReads++;
           if (emptyCaptionReads >= 2) lastEnqueuedKey = "";
         } else {
           $("ocrState").textContent = "Субтитры найдены";
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
           emptyCaptionReads = 0;
+          consecutiveEmptyReads = 0;
           const key = normalize(subtitle.text);
           if (similarCaption(key, previousCandidate)) {
             candidateCount++;
@@ -516,8 +519,9 @@
         }
       }
 
-      // The loop always schedules its next pass, whether OCR found text or not.
-      await wait(180);
+      // Не молотим OCR без остановки: на пустых/посторонних кадрах делаем длинную паузу.
+      const nextDelay = consecutiveEmptyReads >= 2 ? 1700 : 650;
+      await wait(nextDelay);
     }
 
     loopRunning = false;
@@ -540,8 +544,15 @@
   $("startCamera").addEventListener("click", async () => {
     audioUnlocked = true;
     updateSpeechButton();
+    // Unlock Android Chrome TTS directly inside the user's tap, before async camera setup.
     if ("speechSynthesis" in window) {
-      try { speechSynthesis.resume(); } catch (_) {}
+      try {
+        speechSynthesis.resume();
+        const unlockUtterance = new SpeechSynthesisUtterance(" ");
+        unlockUtterance.lang = "ru-RU";
+        unlockUtterance.volume = 0;
+        speechSynthesis.speak(unlockUtterance);
+      } catch (_) {}
     }
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error("Открой страницу через HTTPS в Chrome и разреши камеру.");
