@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101319">
   <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
   <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.14">
+  <link rel="stylesheet" href="./styles.css?v=0.15">
 </head>
 <body>
   <main class="app">
@@ -20,7 +20,17 @@
 
       <div class="video-wrap" id="videoWrap">
         <video id="camera" autoplay muted playsinline></video>
-        <div class="guide" id="guide"><span>Зона распознавания</span></div>
+        <div class="guide" id="guide" aria-label="Рамка зоны распознавания">
+          <span class="guide-label">Перемещай рамку пальцем</span>
+          <i class="roi-handle nw" data-handle="nw" aria-hidden="true"></i>
+          <i class="roi-handle n" data-handle="n" aria-hidden="true"></i>
+          <i class="roi-handle ne" data-handle="ne" aria-hidden="true"></i>
+          <i class="roi-handle e" data-handle="e" aria-hidden="true"></i>
+          <i class="roi-handle se" data-handle="se" aria-hidden="true"></i>
+          <i class="roi-handle s" data-handle="s" aria-hidden="true"></i>
+          <i class="roi-handle sw" data-handle="sw" aria-hidden="true"></i>
+          <i class="roi-handle w" data-handle="w" aria-hidden="true"></i>
+        </div>
         <div id="placeholder" class="placeholder"><div class="camera-icon">◎</div><b>Камера выключена</b><small>Нажми «Включить камеру»</small></div>
       </div>
 
@@ -45,11 +55,13 @@
         <h2 class="settings-title">Настройки</h2>
 
         <details class="settings-group">
-          <summary><span><b>Камера и зона субтитров</b><small>Положение и размер зелёной рамки</small></span><output id="roiLabel">40% / 20%</output></summary>
+          <summary><span><b>Камера и зона субтитров</b><small>Двигай рамку пальцем и меняй её размер за края</small></span><output id="roiLabel">X 8% · Y 40% · 84% × 20%</output></summary>
           <div class="settings-content">
-            <label class="range-label"><span>Положение рамки сверху</span><output id="roiTopValue">40%</output><input id="roiTop" type="range" min="10" max="75" step="1" value="40"></label>
-            <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">20%</output><input id="roiHeight" type="range" min="3" max="35" step="1" value="20"></label>
-            <p class="hint">Подгони зелёную рамку под две строки субтитров. Распознавание идёт только внутри неё.</p>
+            <label class="range-label"><span>Положение по горизонтали</span><output id="roiLeftValue">8%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="8"></label>
+            <label class="range-label"><span>Положение по вертикали</span><output id="roiTopValue">40%</output><input id="roiTop" type="range" min="0" max="80" step="1" value="40"></label>
+            <label class="range-label"><span>Ширина рамки</span><output id="roiWidthValue">84%</output><input id="roiWidth" type="range" min="20" max="100" step="1" value="84"></label>
+            <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">20%</output><input id="roiHeight" type="range" min="3" max="70" step="1" value="20"></label>
+            <p class="hint">На изображении камеры перетаскивай рамку целиком, чтобы переместить её. Потяни за край или угловую точку, чтобы изменить размер. Распознаётся только область внутри рамки.</p>
           </div>
         </details>
 
@@ -92,10 +104,10 @@
       </section>
       <p class="hint">Разреши доступ к камере. Страница должна быть открыта через HTTPS. Звук идёт с телефона или подключённой к нему колонки.</p>
     </section>
-    <footer>GTA6 Voice · прототип 0.14 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.15 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="./app.js?v=0.14"></script>
+  <script src="./app.js?v=0.15"></script>
 </body>
 </html>
