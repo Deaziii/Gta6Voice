@@ -549,7 +549,7 @@
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = null;
       activeSpeech = false;
-      $("speechState").textContent = "Включена";
+      $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
       pumpSpeechQueue();
     };
     const armWatchdog = () => {
