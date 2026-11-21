@@ -213,7 +213,7 @@
       Math.floor(canvas.height * Number($("roiHeight").value) / 100),
       canvas.height - cropY
     );
-    if (cropHeight < 24) return null;
+    if (cropHeight < 10) return null;
 
     const processed = document.createElement("canvas");
     processed.width = Math.round(cropWidth * 1.8);
