@@ -180,12 +180,16 @@
       pctx.filter = "none";
 
       const result = await worker.recognize(processed);
+      const raw = clean(result.data.text || "");
+      $("rawText").textContent = raw || "OCR не нашёл символов внутри рамки.";
       const subtitle = parseSubtitle(result.data);
       $("latency").textContent = Math.round(performance.now() - started) + " мс OCR";
 
       if (!subtitle) {
         $("ocrState").textContent = "Нет чистой реплики";
-        $("lastText").textContent = "В рамке не найдено достаточно чистого русского текста. Передвинь рамку точно на субтитры.";
+        $("lastText").textContent = raw
+          ? "OCR что-то увидел, но фильтр не принял это как чистую русскую реплику. Открой «Что OCR реально увидел» ниже."
+          : "Внутри рамки OCR не нашёл текста. Проверь положение рамки и фокус камеры.";
         previousCandidate = "";
         candidateCount = 0;
         return;
