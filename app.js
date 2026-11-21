@@ -404,58 +404,63 @@
     }
   });
 
-  $("testSpeech").addEventListener("click", () => {
-    if (!("speechSynthesis" in window)) {
-      $("speechState").textContent = "Нет TTS в браузере";
-      return;
-    }
+  function speakStandalone(text) {
+    if (!("speechSynthesis" in window) || !text) return;
     audioUnlocked = true;
-    refreshVoices();
     cancelSpeechAndQueue();
     speechEnabled = true;
     $("toggleSpeech").textContent = "Остановить озвучку";
-    const utterance = new SpeechSynthesisUtterance("Проверка русского голоса. GTA шесть, слышишь меня?");
-    utterance.lang = "ru-RU";
-    utterance.rate = Number($("rate").value);
-    utterance.volume = Number($("volume").value);
-    const voice = voiceFor("");
-    if (voice) utterance.voice = voice;
-    utterance.onstart = () => { $("speechState").textContent = "Говорит"; };
-    utterance.onend = () => {
-      $("speechState").textContent = "Включена";
-      activeSpeech = false;
-      pumpSpeechQueue();
-    };
-    utterance.onerror = () => {
-      $("speechState").textContent = "Ошибка TTS";
-      activeSpeech = false;
-      pumpSpeechQueue();
-    };
-    try { speechSynthesis.speak(utterance); } catch (error) {
-      console.error(error);
-      $("speechState").textContent = "Ошибка TTS";
-    }
-  });
-
-  $("speakManual").addEventListener("click", () => {
-    const text = clean($("manualText").value);
-    if (!text || !("speechSynthesis" in window)) return;
-    audioUnlocked = true;
-    cancelSpeechAndQueue();
-    speechEnabled = true;
+    activeSpeech = true;
+    let done = false;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ru-RU";
     utterance.rate = Number($("rate").value);
     utterance.volume = Number($("volume").value);
     const voice = voiceFor("");
     if (voice) utterance.voice = voice;
-    utterance.onstart = () => { $("speechState").textContent = "Говорит"; };
-    utterance.onend = () => { $("speechState").textContent = "Включена"; pumpSpeechQueue(); };
-    utterance.onerror = () => { $("speechState").textContent = "Ошибка TTS"; pumpSpeechQueue(); };
-    try { speechSynthesis.speak(utterance); } catch (error) {
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (speechWatchdog) window.clearTimeout(speechWatchdog);
+      speechWatchdog = null;
+      activeSpeech = false;
+      $("speechState").textContent = "Включена";
+      pumpSpeechQueue();
+    };
+    const armWatchdog = () => {
+      if (speechWatchdog) window.clearTimeout(speechWatchdog);
+      speechWatchdog = window.setTimeout(() => {
+        try { speechSynthesis.cancel(); } catch (_) {}
+        finish();
+      }, 20000);
+    };
+
+    utterance.onstart = () => {
+      $("speechState").textContent = "Говорит";
+      armWatchdog();
+    };
+    utterance.onboundary = armWatchdog;
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    try {
+      speechSynthesis.resume();
+      speechSynthesis.speak(utterance);
+      armWatchdog();
+    } catch (error) {
       console.error(error);
       $("speechState").textContent = "Ошибка TTS";
+      finish();
     }
+  }
+
+  $("testSpeech").addEventListener("click", () => {
+    refreshVoices();
+    speakStandalone("Проверка русского голоса. GTA шесть, слышишь меня?");
+  });
+
+  $("speakManual").addEventListener("click", () => {
+    speakStandalone(clean($("manualText").value));
   });
 
   document.addEventListener("visibilitychange", () => {
