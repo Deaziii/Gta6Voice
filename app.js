@@ -338,7 +338,6 @@
     canvas.height = Math.round(height * canvas.width / width);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Same v0.10 image scale and contrast, using the current movable frame coordinates.
     const cropX = Math.floor(canvas.width * Number($("roiLeft").value) / 100);
     const cropY = Math.floor(canvas.height * Number($("roiTop").value) / 100);
     const cropWidth = Math.min(
@@ -349,19 +348,61 @@
       Math.floor(canvas.height * Number($("roiHeight").value) / 100),
       canvas.height - cropY
     );
-    if (cropHeight < 10) return null;
+    if (cropHeight < 10 || cropWidth < 10) return null;
 
+    // Enlarge the subtitle crop, convert it to grayscale, then isolate bright glyphs.
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 1.8);
-    processed.height = Math.round(cropHeight * 1.8);
+    processed.width = Math.round(cropWidth * 2);
+    processed.height = Math.round(cropHeight * 2);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
-    // The alternate pass turns white subtitle glyphs into dark glyphs on a light backing.
-    // The camera preview itself is never changed.
-    pctx.filter = invertForOcr
-      ? "grayscale(1) contrast(1.5) invert(1)"
-      : "grayscale(1) contrast(1.35)";
+    pctx.filter = "grayscale(1)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
+
+    const frame = pctx.getImageData(0, 0, processed.width, processed.height);
+    const pixels = frame.data;
+    const histogram = new Uint32Array(256);
+    for (let i = 0; i < pixels.length; i += 4) {
+      const gray = Math.round((pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114));
+      histogram[gray]++;
+    }
+
+    // Otsu threshold: separate bright subtitle letters from darker picture/shadow.
+    const total = pixels.length / 4;
+    let sum = 0;
+    for (let level = 0; level < 256; level++) sum += level * histogram[level];
+    let sumBackground = 0;
+    let weightBackground = 0;
+    let bestVariance = -1;
+    let threshold = 175;
+    for (let level = 0; level < 256; level++) {
+      weightBackground += histogram[level];
+      if (!weightBackground) continue;
+      const weightForeground = total - weightBackground;
+      if (!weightForeground) break;
+      sumBackground += level * histogram[level];
+      const meanBackground = sumBackground / weightBackground;
+      const meanForeground = (sum - sumBackground) / weightForeground;
+      const variance = weightBackground * weightForeground *
+        (meanBackground - meanForeground) * (meanBackground - meanForeground);
+      if (variance > bestVariance) {
+        bestVariance = variance;
+        threshold = level;
+      }
+    }
+    // Avoid a very low threshold that would turn the bright game scene into white noise.
+    threshold = Math.max(145, Math.min(220, threshold + 12));
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      const gray = Math.round((pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114));
+      const isGlyph = gray >= threshold;
+      const value = invertForOcr ? (isGlyph ? 0 : 255) : (isGlyph ? 255 : 0);
+      pixels[i] = value;
+      pixels[i + 1] = value;
+      pixels[i + 2] = value;
+      pixels[i + 3] = 255;
+    }
+    pctx.putImageData(frame, 0, 0);
     return processed;
   }
 
