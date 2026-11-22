@@ -219,7 +219,7 @@ function classifyExplicitSpeakerName(speaker) {
   const norm = cleanText(speaker).toLocaleLowerCase("ru-RU");
   if (!norm) return null;
   if (/^(?:jason|джейсон)(?:$|\s)/.test(norm)) return ROLES.JASON;
-  if (/^(lucia|люсия|лусия)\b/.test(norm)) return ROLES.LUCIA;
+  if (/^(?:lucia|люсия|лусия)(?:$|\s)/.test(norm)) return ROLES.LUCIA;
 
   const words = norm.split(/\s+/).filter(Boolean);
   for (const w of words) {
