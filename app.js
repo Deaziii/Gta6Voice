@@ -2,6 +2,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 import {
   CaptionController,
   cleanText,
+  evaluateFrameGate,
   isRussianSubtitleLine,
   normalizeRussianHomoglyphs
 } from "./captionController.js";
@@ -11,6 +12,19 @@ import {
   const $ = id => document.getElementById(id);
   const video = $("camera"), canvas = $("frame");
   const ctx = canvas.getContext("2d", { willReadFrequently: true, alpha: false });
+
+  const GATE_W = 128;
+  const GATE_H = 40;
+  const gateCanvas = document.createElement("canvas");
+  gateCanvas.width = GATE_W;
+  gateCanvas.height = GATE_H;
+  const gateCtx = gateCanvas.getContext("2d", { willReadFrequently: true, alpha: false });
+
+  const SPEED_PRESETS = {
+    turbo: { maxW: 576, maxH: 256, detLimit: 512, minUpscale: 1.25 },
+    balanced: { maxW: 704, maxH: 320, detLimit: 640, minUpscale: 1.45 },
+    sharp: { maxW: 896, maxH: 416, detLimit: 800, minUpscale: 1.75 }
+  };
 
   let stream = null;
   let worker = null;
@@ -22,18 +36,51 @@ import {
   let activeSpeech = false;
   let activeSpeechStartedAt = 0;
   let speechWatchdog = null;
-  let speechToken = 0;
   let voices = [];
   let cachedRuntimeReport = "";
   let consecutiveOcrErrors = 0;
   let lastProcessedVideoTime = -1;
   let lastRoiSignature = "";
-  let sameFrameSkips = 0;
+  let prevGateGray = null;
+  let lastFullOcrAt = 0;
+  let lastHadSubtitle = false;
+  let keepAliveAudioCtx = null;
 
   const captionController = new CaptionController();
+
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
-  const clean = cleanText;
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const round32 = (value, min = 32) => Math.max(min, Math.round(value / 32) * 32);
   const setStatus = value => { $("status").textContent = value; };
+
+  /**
+   * Keep Bluetooth A2DP / Android audio output awake with an inaudible (-80 dB) signal
+   * while scanning so the first word of a new subtitle never suffers 300ms BT wakeup lag.
+   */
+  function startAudioKeepAlive() {
+    if (keepAliveAudioCtx) return;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const actx = new AudioCtx();
+      const osc = actx.createOscillator();
+      const gain = actx.createGain();
+      osc.frequency.value = 40;
+      gain.gain.value = 0.00005;
+      osc.connect(gain);
+      gain.connect(actx.destination);
+      osc.start();
+      if (actx.state === "suspended") actx.resume().catch(() => {});
+      keepAliveAudioCtx = actx;
+    } catch (_) {}
+  }
+
+  function stopAudioKeepAlive() {
+    if (!keepAliveAudioCtx) return;
+    const actx = keepAliveAudioCtx;
+    keepAliveAudioCtx = null;
+    try { actx.close(); } catch (_) {}
+  }
 
   function updateDiagnostics(now = Date.now()) {
     const snap = captionController.getSnapshot(now);
@@ -54,6 +101,7 @@ import {
     $("speechDuration").textContent = speechMs !== null ? (speechMs / 1000).toFixed(1) + " с" : "—";
     $("droppedCount").textContent = String(snap.dropped + snap.stale);
   }
+
   function updateSpeechButton() {
     $("toggleSpeech").textContent = speechEnabled ? "Озвучка: ВКЛ" : "Озвучка: ВЫКЛ";
     $("toggleSpeech").setAttribute("aria-pressed", speechEnabled ? "true" : "false");
@@ -64,11 +112,17 @@ import {
   }
   updateSpeechButton();
   updateRecognitionButton();
+  updateDiagnostics();
 
-  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  function invalidateFrameGate() {
+    prevGateGray = null;
+    lastFullOcrAt = 0;
+    lastProcessedVideoTime = -1;
+  }
+
   function updateRoi() {
     let left = clamp(Number($("roiLeft").value), 0, 80);
-    let top = clamp(Number($("roiTop").value), 0, 80);
+    let top = clamp(Number($("roiTop").value), 0, 85);
     let width = clamp(Number($("roiWidth").value), 20, 100);
     let height = clamp(Number($("roiHeight").value), 3, 70);
     left = Math.min(left, 100 - width);
@@ -90,10 +144,25 @@ import {
     $("roiWidthValue").textContent = width + "%";
     $("roiHeightValue").textContent = height + "%";
     $("roiLabel").textContent = "X " + left + "% · Y " + top + "% · " + width + "% × " + height + "%";
+    invalidateFrameGate();
   }
   ["roiLeft", "roiTop", "roiWidth", "roiHeight"].forEach(id => {
     $(id).addEventListener("input", updateRoi);
   });
+
+  $("slimRoi")?.addEventListener("click", () => {
+    const currentTop = Number($("roiTop").value);
+    const currentHeight = Number($("roiHeight").value);
+    const center = currentTop + currentHeight / 2;
+    const targetHeight = 13;
+    $("roiLeft").value = "6";
+    $("roiWidth").value = "88";
+    $("roiHeight").value = String(targetHeight);
+    $("roiTop").value = String(clamp(Math.round(center - targetHeight / 2), 0, 100 - targetHeight));
+    updateRoi();
+  });
+
+  $("ocrSpeed")?.addEventListener("change", invalidateFrameGate);
 
   let roiPointer = null;
   const guide = $("guide");
@@ -207,8 +276,6 @@ import {
 
     if (activeSpeech) {
       if (captionController.shouldPreemptActive(now)) {
-        // Invalidate callbacks from the utterance being stopped before cancelling it.
-        speechToken++;
         try { speechSynthesis.cancel(); } catch (_) {}
         if (speechWatchdog) window.clearTimeout(speechWatchdog);
         speechWatchdog = null;
@@ -232,12 +299,11 @@ import {
     updateDiagnostics(now);
 
     let finished = false;
-    const token = ++speechToken;
     const utterance = new SpeechSynthesisUtterance(item.speechText);
     utterance.lang = "ru-RU";
     const baseRate = Number($("rate").value);
-    const catchUpBoost = item.lagMs > 1400 ? 0.22 : item.lagMs > 600 ? 0.10 : 0;
-    utterance.rate = clamp(baseRate + catchUpBoost, 0.85, 1.45);
+    const catchUpBoost = item.lagMs > 1200 ? 0.24 : item.lagMs > 450 ? 0.12 : 0;
+    utterance.rate = clamp(baseRate + catchUpBoost, 0.85, 1.65);
     utterance.volume = Number($("volume").value);
     const voice = voiceFor(item.speaker);
     if (voice) utterance.voice = voice;
@@ -245,15 +311,15 @@ import {
     const armWatchdog = () => {
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = window.setTimeout(() => {
-        if (finished || token !== speechToken) return;
+        if (finished) return;
         console.warn("TTS watchdog: forcing queue recovery");
         try { speechSynthesis.cancel(); } catch (_) {}
         finishSpeech();
-      }, 14000);
+      }, 12000);
     };
 
     function finishSpeech() {
-      if (finished || token !== speechToken) return;
+      if (finished) return;
       finished = true;
       const endedAt = Date.now();
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
@@ -267,7 +333,6 @@ import {
     }
 
     utterance.onstart = () => {
-      if (token !== speechToken) return;
       activeSpeechStartedAt = Date.now();
       $("speechState").textContent = "Говорит";
       updateDiagnostics(activeSpeechStartedAt);
@@ -277,11 +342,12 @@ import {
     utterance.onend = finishSpeech;
     utterance.onerror = event => {
       console.warn("Speech synthesis error", event);
+      $("speechState").textContent = "Повторяю очередь после ошибки";
       finishSpeech();
     };
 
     try {
-      speechSynthesis.resume();
+      if (speechSynthesis.paused) speechSynthesis.resume();
       speechSynthesis.speak(utterance);
       armWatchdog();
     } catch (error) {
@@ -292,7 +358,6 @@ import {
   }
 
   function cancelSpeechAndQueue() {
-    speechToken++;
     captionController.clearQueueAndSpeech();
     if (speechWatchdog) window.clearTimeout(speechWatchdog);
     speechWatchdog = null;
@@ -416,15 +481,21 @@ import {
     };
   }
 
+  function currentSpeedPreset() {
+    const key = $("ocrSpeed")?.value || "turbo";
+    return SPEED_PRESETS[key] || SPEED_PRESETS.turbo;
+  }
+
   /**
-   * Direct single-pass crop from video onto a reused canvas with a 14px quiet-zone
-   * border. This avoids resizing the full camera frame and allocating a canvas
-   * on every OCR pass.
+   * 1) Fast 128x40 gate check (<0.4ms) skips duplicate/empty frames so the WASM worker
+   *    stays immediately ready for new dialogue.
+   * 2) Compact stride-32 crop (576px default in Turbo) slashes DBNet detMs ~3.5x while
+   *    preserving native portrait sensor sharpness without artificial dark-border boxes.
    */
-  function prepareRecognitionImage() {
+  function prepareRecognitionImage(now) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    if (!vw || !vh) return null;
+    if (!vw || !vh) return { kind: "invalid" };
 
     const leftPct = Number($("roiLeft").value);
     const topPct = Number($("roiTop").value);
@@ -436,44 +507,45 @@ import {
     const sy = Math.floor(vh * topPct / 100);
     const sw = Math.min(Math.floor(vw * widthPct / 100), vw - sx);
     const sh = Math.min(Math.floor(vh * heightPct / 100), vh - sy);
-    if (sw < 16 || sh < 12) return null;
+    if (sw < 16 || sh < 12) return { kind: "invalid" };
 
     const currentVideoTime = Number(video.currentTime) || 0;
-    if (
-      currentVideoTime > 0 &&
-      currentVideoTime === lastProcessedVideoTime &&
-      roiSig === lastRoiSignature &&
-      sameFrameSkips < 1
-    ) {
-      sameFrameSkips += 1;
-      return "SAME_VIDEO_FRAME";
+    if (currentVideoTime > 0 && currentVideoTime === lastProcessedVideoTime && roiSig === lastRoiSignature) {
+      return { kind: "skip", reason: "same-video-frame" };
     }
-    sameFrameSkips = 0;
     lastProcessedVideoTime = currentVideoTime;
     lastRoiSignature = roiSig;
 
-    const desiredScale = sh < 90 ? 2.2 : 1.8;
-    const scale = Math.min(desiredScale, 1960 / sw);
-    const drawW = Math.max(32, Math.round(sw * scale));
-    const drawH = Math.max(24, Math.round(sh * scale));
-    const pad = 14;
-    const outW = drawW + pad * 2;
-    const outH = drawH + pad * 2;
+    gateCtx.drawImage(video, sx, sy, sw, sh, 0, 0, GATE_W, GATE_H);
+    const gateData = gateCtx.getImageData(0, 0, GATE_W, GATE_H).data;
+    const gate = evaluateFrameGate(
+      gateData,
+      GATE_W,
+      GATE_H,
+      { prevGray: prevGateGray, lastFullOcrAt, lastHadSubtitle },
+      now
+    );
+    if (!gate.run) {
+      return { kind: "skip", reason: gate.reason };
+    }
+
+    const preset = currentSpeedPreset();
+    const scale = Math.min(preset.minUpscale, preset.maxW / sw, preset.maxH / sh);
+    const outW = round32(Math.min(preset.maxW, sw * scale), 64);
+    const outH = round32(Math.min(preset.maxH, sh * scale), 32);
 
     if (canvas.width !== outW || canvas.height !== outH) {
       canvas.width = outW;
       canvas.height = outH;
     }
 
-    ctx.filter = "none";
-    ctx.fillStyle = "#0d0d0d";
-    ctx.fillRect(0, 0, outW, outH);
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.filter = "grayscale(1) brightness(0.95) contrast(1.42)";
-    ctx.drawImage(video, sx, sy, sw, sh, pad, pad, drawW, drawH);
+    ctx.imageSmoothingQuality = "medium";
+    ctx.filter = "grayscale(1) contrast(1.33)";
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, outW, outH);
     ctx.filter = "none";
-    return canvas;
+
+    return { kind: "ready", image: canvas, gateGray: gate.gray, preset };
   }
 
   async function scanLoop() {
@@ -483,36 +555,46 @@ import {
     while (scanning) {
       if (!recognitionEnabled) {
         $("ocrState").textContent = "Распознавание остановлено";
-        await wait(160);
+        await wait(140);
         continue;
       }
       if (!worker || video.readyState < 2 || !video.videoWidth) {
         $("ocrState").textContent = "Жду кадр камеры…";
-        await wait(120);
+        await wait(100);
         continue;
       }
 
       const started = performance.now();
+      const captureNow = Date.now();
       try {
-        const image = prepareRecognitionImage();
-        if (image === "SAME_VIDEO_FRAME") {
-          await wait(16);
+        const prepared = prepareRecognitionImage(captureNow);
+        if (prepared.kind === "invalid") {
+          $("ocrState").textContent = "Проверь рамку";
+          await wait(180);
           continue;
         }
-        if (!image) {
-          $("ocrState").textContent = "Проверь рамку";
-          await wait(200);
+        if (prepared.kind === "skip") {
+          if (prepared.reason === "empty-scene") {
+            captionController.observe({ text: "", confidence: 0 }, captureNow);
+            pumpSpeechQueue();
+          }
+          await wait(24);
           continue;
         }
 
-        const [result] = await worker.predict(image, {
+        const [result] = await worker.predict(prepared.image, {
+          textDetLimitSideLen: prepared.preset.detLimit,
+          textDetLimitType: "max",
           textRecScoreThresh: 0.15,
           textDetThresh: 0.25,
           textDetBoxThresh: 0.35
         });
         const parsed = parsePaddleResult(result);
 
+        prevGateGray = prepared.gateGray;
+        lastFullOcrAt = Date.now();
         consecutiveOcrErrors = 0;
+
         const metrics = result?.metrics || {};
         const totalMs = Number(metrics.totalMs);
         const detMs = Number(metrics.detMs);
@@ -521,25 +603,11 @@ import {
         const timingParts = [];
         if (Number.isFinite(detMs)) timingParts.push("дет. " + Math.round(detMs));
         if (Number.isFinite(recMs)) timingParts.push("текст " + Math.round(recMs));
-        if (Number.isFinite(Number(metrics.detectedBoxes))) timingParts.push("обл. " + Number(metrics.detectedBoxes));
-        if (Number.isFinite(Number(metrics.recognizedCount))) timingParts.push("стр. " + Number(metrics.recognizedCount));
-        $("latency").textContent = Math.round(measuredMs) + " мс" +
-          (timingParts.length ? " · " + timingParts.join(" / ") : "");
-
-        const now = Date.now();
-        const subtitle = parsed.subtitle;
-        const observation = subtitle
-          ? { ...subtitle, lineCount: subtitle.lineCount || 1 }
-          : { text: "", confidence: 0, lineCount: 0 };
-        const snapshot = captionController.observe(observation, now);
-
-        if (subtitle) {
-          $("ocrState").textContent = "Субтитры найдены";
-          $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
-        } else {
-          $("ocrState").textContent = "Фильтр отсеял шум";
-          $("lastText").textContent = "Чистая русская реплика пока не найдена.";
+        timingParts.push(canvas.width + "×" + canvas.height);
+        if (Number.isFinite(Number(metrics.recognizedCount))) {
+          timingParts.push("стр. " + Number(metrics.recognizedCount));
         }
+        $("latency").textContent = Math.round(measuredMs) + " мс · " + timingParts.join(" / ");
 
         if ($("debugOcr")?.open) {
           if (!cachedRuntimeReport) {
@@ -548,23 +616,36 @@ import {
                 cachedRuntimeReport = "Runtime: " + JSON.stringify({
                   bundle: "onnxruntime-web",
                   ...result.runtime,
-                  mode: "known-good-wasm-v0.52",
+                  mode: "known-good-wasm-v0.53",
                   detector: { model: "PP-OCRv5_mobile_det", thresh: 0.25, boxThresh: 0.35 }
                 });
               } catch (_) {
                 cachedRuntimeReport = "Runtime: метаданные получены";
               }
             } else {
-              cachedRuntimeReport = "Runtime: метаданные недоступны";
+              cachedRuntimeReport = "Runtime: metadata недоступна";
             }
           }
           $("rawText").textContent = parsed.report + "\n\n" + cachedRuntimeReport;
         }
 
+        const now = Date.now();
+        const subtitle = parsed.subtitle;
+        if (!subtitle) {
+          lastHadSubtitle = false;
+          $("ocrState").textContent = "Ожидание реплики";
+          $("lastText").textContent = "Чистая русская реплика пока не найдена.";
+          captionController.observe({ text: "", confidence: 0 }, now);
+        } else {
+          lastHadSubtitle = true;
+          $("ocrState").textContent = "Субтитры найдены";
+          $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
+          captionController.observe(subtitle, now);
+        }
         pumpSpeechQueue();
-        updateDiagnostics(now);
       } catch (error) {
         consecutiveOcrErrors++;
+        invalidateFrameGate();
         console.error("OCR error", error);
         const errorText = error && error.message ? error.message : String(error);
         $("ocrState").textContent = "Ошибка OCR · повторяю";
@@ -582,7 +663,6 @@ import {
             if (scanning) {
               worker = await createOcrWorker();
               consecutiveOcrErrors = 0;
-              cachedRuntimeReport = "";
               $("ocrState").textContent = "PaddleOCR перезапущен";
               $("lastText").textContent = "Распознавание восстановлено. Жду субтитры…";
             }
@@ -595,8 +675,7 @@ import {
         }
       }
 
-      const cycleMs = performance.now() - started;
-      await wait(cycleMs > 90 ? 8 : 0);
+      await wait(6);
     }
 
     loopRunning = false;
@@ -613,8 +692,6 @@ import {
         url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
       },
       worker: true,
-      // Restore the known-good PaddleOCR.js 0.4.2 runtime configuration.
-      // Let the SDK load its matching ONNX Runtime WASM build.
       ortOptions: {
         backend: "wasm",
         numThreads: 1,
@@ -626,8 +703,8 @@ import {
 
   $("startCamera").addEventListener("click", async () => {
     audioUnlocked = true;
+    startAudioKeepAlive();
     updateSpeechButton();
-    // Unlock Android Chrome TTS directly inside the user's tap, before async camera setup.
     if ("speechSynthesis" in window) {
       try {
         speechSynthesis.resume();
@@ -642,8 +719,28 @@ import {
       setStatus("Запуск камеры…");
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: "continuous" }] }
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        }
       });
+
+      const [videoTrack] = stream.getVideoTracks();
+      if (videoTrack?.getCapabilities && videoTrack?.applyConstraints) {
+        try {
+          const caps = videoTrack.getCapabilities();
+          const advanced = {};
+          if (Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) {
+            advanced.focusMode = "continuous";
+          }
+          if (Object.keys(advanced).length) {
+            await videoTrack.applyConstraints({ advanced: [advanced] });
+          }
+        } catch (_) {}
+      }
+
       video.srcObject = stream;
       await video.play();
       if (video.videoWidth && video.videoHeight) {
@@ -657,6 +754,10 @@ import {
       setStatus("Загрузка OCR…");
       $("ocrState").textContent = "Загрузка русского OCR…";
 
+      invalidateFrameGate();
+      lastHadSubtitle = false;
+      captionController.reset();
+      updateDiagnostics();
       worker = await createOcrWorker();
       scanning = true;
       document.body.classList.add("running");
@@ -664,6 +765,7 @@ import {
       scanLoop();
     } catch (error) {
       console.error(error);
+      stopAudioKeepAlive();
       setStatus("Не удалось запустить");
       $("lastText").textContent = "Ошибка: " + (error.message || String(error));
       if (stream) stream.getTracks().forEach(track => track.stop());
@@ -677,6 +779,7 @@ import {
 
   $("stopCamera").addEventListener("click", async () => {
     scanning = false;
+    stopAudioKeepAlive();
     if (stream) stream.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
@@ -686,10 +789,11 @@ import {
       worker = null;
       try { await oldWorker.dispose(); } catch (_) {}
     }
-    while (loopRunning) await wait(40);
+    while (loopRunning) await wait(25);
     cancelSpeechAndQueue();
     captionController.reset();
-    cachedRuntimeReport = "";
+    invalidateFrameGate();
+    updateDiagnostics();
     $("placeholder").hidden = false;
     $("startCamera").disabled = false;
     $("stopCamera").disabled = true;
@@ -701,9 +805,10 @@ import {
 
   $("toggleRecognition").addEventListener("click", () => {
     recognitionEnabled = !recognitionEnabled;
-    if (!recognitionEnabled) captionController.clearQueueAndSpeech();
-    updateRecognitionButton();
+    captionController.clearQueueAndSpeech();
+    invalidateFrameGate();
     updateDiagnostics();
+    updateRecognitionButton();
     $("ocrState").textContent = recognitionEnabled
       ? (scanning ? "Распознавание включено" : "Ожидание")
       : "Распознавание остановлено";
@@ -720,6 +825,7 @@ import {
       cancelSpeechAndQueue();
       $("speechState").textContent = "Остановлена";
     } else {
+      startAudioKeepAlive();
       $("speechState").textContent = "Включена";
       if ("speechSynthesis" in window) {
         try { speechSynthesis.resume(); } catch (_) {}
@@ -731,12 +837,11 @@ import {
   function speakStandalone(text) {
     if (!("speechSynthesis" in window) || !text) return;
     audioUnlocked = true;
+    startAudioKeepAlive();
     cancelSpeechAndQueue();
     activeSpeech = true;
     activeSpeechStartedAt = Date.now();
-    updateDiagnostics(activeSpeechStartedAt);
     let done = false;
-    const token = ++speechToken;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ru-RU";
     utterance.rate = Number($("rate").value);
@@ -745,7 +850,7 @@ import {
     if (voice) utterance.voice = voice;
 
     const finish = () => {
-      if (done || token !== speechToken) return;
+      if (done) return;
       done = true;
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = null;
@@ -758,24 +863,21 @@ import {
     const armWatchdog = () => {
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = window.setTimeout(() => {
-        if (token !== speechToken) return;
         try { speechSynthesis.cancel(); } catch (_) {}
         finish();
-      }, 20000);
+      }, 12000);
     };
 
     utterance.onstart = () => {
-      if (token !== speechToken) return;
       activeSpeechStartedAt = Date.now();
       $("speechState").textContent = "Говорит";
-      updateDiagnostics(activeSpeechStartedAt);
       armWatchdog();
     };
     utterance.onboundary = armWatchdog;
     utterance.onend = finish;
     utterance.onerror = finish;
     try {
-      speechSynthesis.resume();
+      if (speechSynthesis.paused) speechSynthesis.resume();
       speechSynthesis.speak(utterance);
       armWatchdog();
     } catch (error) {
@@ -791,14 +893,16 @@ import {
   });
 
   $("speakManual").addEventListener("click", () => {
-    speakStandalone(clean($("manualText").value));
+    speakStandalone(cleanText($("manualText").value));
   });
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && scanning && "speechSynthesis" in window) {
-      try { speechSynthesis.resume(); } catch (_) {}
+      if (keepAliveAudioCtx?.state === "suspended") {
+        keepAliveAudioCtx.resume().catch(() => {});
+      }
+      try { if (speechSynthesis.paused) speechSynthesis.resume(); } catch (_) {}
       pumpSpeechQueue();
-      updateDiagnostics();
     }
   });
 

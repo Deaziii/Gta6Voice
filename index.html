@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101319">
   <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
   <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.52">
+  <link rel="stylesheet" href="./styles.css?v=0.53">
 </head>
 <body>
   <main class="app">
@@ -38,8 +38,19 @@
         <button id="stopCamera" disabled>Остановить камеру</button>
         <button id="toggleSpeech" class="speech-toggle" type="button" aria-pressed="true">Озвучка: ВКЛ</button>
         <button id="toggleRecognition" class="recognition-toggle" type="button" aria-pressed="true">Распознавание: ВКЛ</button>
+        <button id="slimRoi" class="secondary" type="button">Узкая полоса (2 стр.)</button>
         <button id="testSpeech" class="secondary" type="button">Тест голоса</button>
       </div>
+
+      <div class="speed-bar">
+        <label for="ocrSpeed">Режим OCR:</label>
+        <select id="ocrSpeed">
+          <option value="turbo" selected>Турбо · миним. задержка (576px)</option>
+          <option value="balanced">Баланс · средние субтитры (704px)</option>
+          <option value="sharp">Чётко · мелкий шрифт вдали (896px)</option>
+        </select>
+      </div>
+
       <p class="speech-status">Состояние голоса: <span id="speechState" class="muted">Включена</span></p>
 
       <div class="ocr-inline">
@@ -52,7 +63,7 @@
           <span>Пропущено: <b id="droppedCount">0</b></span>
           <span>OCR: <b id="latency">—</b></span>
         </div>
-        <details class="debug-ocr">
+        <details id="debugOcr" class="debug-ocr">
           <summary>Что реально увидел OCR</summary>
           <pre id="rawText">Пока нет данных</pre>
         </details>
@@ -62,13 +73,13 @@
         <h2 class="settings-title">Настройки</h2>
 
         <details class="settings-group">
-          <summary><span><b>Камера и зона субтитров</b><small>Двигай рамку пальцем и меняй её размер за края</small></span><output id="roiLabel">X 8% · Y 40% · 84% × 20%</output></summary>
+          <summary><span><b>Камера и зона субтитров</b><small>Чем уже рамка по высоте, тем быстрее OCR</small></span><output id="roiLabel">X 6% · Y 43% · 88% × 13%</output></summary>
           <div class="settings-content">
-            <label class="range-label"><span>Положение по горизонтали</span><output id="roiLeftValue">8%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="8"></label>
-            <label class="range-label"><span>Положение по вертикали</span><output id="roiTopValue">40%</output><input id="roiTop" type="range" min="0" max="80" step="1" value="40"></label>
-            <label class="range-label"><span>Ширина рамки</span><output id="roiWidthValue">84%</output><input id="roiWidth" type="range" min="20" max="100" step="1" value="84"></label>
-            <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">20%</output><input id="roiHeight" type="range" min="3" max="70" step="1" value="20"></label>
-            <p class="hint">На изображении камеры перетаскивай рамку целиком, чтобы переместить её. Потяни за край или угловую точку, чтобы изменить размер. Распознаётся только область внутри рамки.</p>
+            <label class="range-label"><span>Положение по горизонтали</span><output id="roiLeftValue">6%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="6"></label>
+            <label class="range-label"><span>Положение по вертикали</span><output id="roiTopValue">43%</output><input id="roiTop" type="range" min="0" max="85" step="1" value="43"></label>
+            <label class="range-label"><span>Ширина рамки</span><output id="roiWidthValue">88%</output><input id="roiWidth" type="range" min="20" max="100" step="1" value="88"></label>
+            <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">13%</output><input id="roiHeight" type="range" min="3" max="70" step="1" value="13"></label>
+            <p class="hint">Держи рамку узкой полосой строго по строкам субтитров: захват лишнего фона сверху и снизу напрямую увеличивает время детекции.</p>
           </div>
         </details>
 
@@ -83,7 +94,7 @@
         <details class="settings-group">
           <summary><span><b>Голос и звучание</b><small>Голос персонажей, скорость и громкость</small></span></summary>
           <div class="settings-content">
-            <label class="range-label"><span>Скорость речи</span><output id="rateValue">1.00×</output><input id="rate" type="range" min="0.85" max="1.35" step="0.05" value="1"></label>
+            <label class="range-label"><span>Скорость речи</span><output id="rateValue">1.15×</output><input id="rate" type="range" min="0.85" max="1.60" step="0.05" value="1.15"></label>
             <label class="range-label"><span>Громкость речи</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
             <div class="voice-grid">
               <label>Обычный голос<select id="defaultVoice"><option value="">Русский голос Android по умолчанию</option></select></label>
@@ -103,11 +114,11 @@
         </details>
 
       </section>
-      <p class="hint">Разреши доступ к камере. Страница должна быть открыта через HTTPS. Звук идёт с телефона или подключённой к нему колонки.</p>
+      <p class="hint">Открывай страницу напрямую в Chrome на Android (не внутри Telegram-браузера) — там WASM работает заметно быстрее.</p>
     </section>
-    <footer>GTA6 Voice · прототип 0.52 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.53 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
-  <script type="module" src="./app.js?v=0.52"></script>
+  <script type="module" src="./app.js?v=0.53"></script>
 </body>
 </html>

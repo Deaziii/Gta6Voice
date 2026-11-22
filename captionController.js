@@ -9,8 +9,23 @@ const VALID_SINGLE_LETTER_WORDS = new Set(["а", "и", "о", "у", "я", "в", "
 export const cleanText = value => (value || "").replace(/[|_]/g, " ").replace(/\s+/g, " ").trim();
 
 /**
+ * Fix random mid-word uppercase Cyrillic glitches from OCR (e.g. "ровОрИТ" -> "роворит")
+ * while keeping real ALL-CAPS acronyms ("США", "ФБР") and capitalized words ("Господь") intact.
+ */
+export function fixMidWordCase(text) {
+  return text.replace(/[А-Яа-яЁё]{2,}/g, word => {
+    const hasLower = /[а-яё]/.test(word);
+    const hasUpperAfterFirst = /[А-ЯЁ]/.test(word.slice(1));
+    if (hasLower && hasUpperAfterFirst) {
+      return word[0] + word.slice(1).toLocaleLowerCase("ru-RU");
+    }
+    return word;
+  });
+}
+
+/**
  * Fix Latin lookalike characters produced by OCR inside Russian subtitle lines
- * without touching genuine English UI prompts (e.g. "Press X to skip" or "GTA").
+ * and normalize mid-word OCR capitalization glitches.
  */
 export function normalizeRussianHomoglyphs(value) {
   const cleaned = cleanText(value);
@@ -18,7 +33,7 @@ export function normalizeRussianHomoglyphs(value) {
   const cyrillicCount = (cleaned.match(/[А-Яа-яЁё]/g) || []).length;
   if (cyrillicCount < 1) return cleaned;
 
-  return cleaned.split(" ").map(token => {
+  const mapped = cleaned.split(" ").map(token => {
     const core = token.replace(/[^A-Za-zА-Яа-яЁё]/g, "");
     if (!core || NON_HOMOGLYPH_LATIN.test(core)) return token;
 
@@ -28,6 +43,8 @@ export function normalizeRussianHomoglyphs(value) {
 
     return token.replace(/[ABCEHKMOPTXYaceopxy]/g, ch => HOMOGLYPH_MAP[ch] || ch);
   }).join(" ");
+
+  return fixMidWordCase(mapped);
 }
 
 export const normalizeKey = value => normalizeRussianHomoglyphs(value)
@@ -63,6 +80,99 @@ export function isRussianSubtitleLine(line) {
   if (invalidSingleWords >= 2 || invalidSingleWords / words.length > 0.25) return false;
 
   return true;
+}
+
+/**
+ * Lightweight (<0.4ms) pre-OCR pixel check on a 128x40 RGBA thumbnail of the ROI.
+ * Prevents locking the single-threaded WASM worker for 500-1500ms when the ROI
+ * hasn't changed or when pointing at a completely blank wall/screen.
+ */
+export function evaluateFrameGate(rgba, width, height, state = {}, now = Date.now()) {
+  const pixelCount = width * height;
+  if (!rgba || rgba.length < pixelCount * 4) {
+    return { run: true, reason: "no-buffer", gray: null };
+  }
+
+  const gray = new Uint8Array(pixelCount);
+  for (let i = 0, p = 0; i < pixelCount; i++, p += 4) {
+    gray[i] = (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
+  }
+
+  const prevGray = state.prevGray;
+  const lastFullOcrAt = Number(state.lastFullOcrAt) || 0;
+  const lastHadSubtitle = Boolean(state.lastHadSubtitle);
+  const forceEveryMs = Number(state.forceEveryMs) || 1400;
+
+  if (!prevGray || prevGray.length !== pixelCount || now - lastFullOcrAt >= forceEveryMs) {
+    return { run: true, reason: "periodic", gray };
+  }
+
+  // 1. Tile-based Mean Absolute Difference (8x10 blocks) against last actual OCR frame
+  const tileW = 8;
+  const tileH = 10;
+  let maxTileMad = 0;
+  for (let ty = 0; ty <= height - tileH; ty += tileH) {
+    for (let tx = 0; tx <= width - tileW; tx += tileW) {
+      let sum = 0;
+      for (let dy = 0; dy < tileH; dy++) {
+        let idx = (ty + dy) * width + tx;
+        for (let dx = 0; dx < tileW; dx++, idx++) {
+          const diff = gray[idx] - prevGray[idx];
+          sum += diff < 0 ? -diff : diff;
+        }
+      }
+      const mad = sum / (tileW * tileH);
+      if (mad > maxTileMad) maxTileMad = mad;
+    }
+  }
+
+  if (maxTileMad < 5.2) {
+    // Exact repeats can be skipped immediately. But a small non-zero change may
+    // still be faint subtitle text, so let the stroke check inspect it below.
+    let anyPixelChanged = false;
+    for (let i = 0; i < pixelCount; i++) {
+      if (gray[i] !== prevGray[i]) {
+        anyPixelChanged = true;
+        break;
+      }
+    }
+    if (!anyPixelChanged || lastHadSubtitle) {
+      return { run: false, reason: "unchanged", gray: prevGray };
+    }
+  }
+
+  // 2. When previous OCR saw no subtitle, check if ANY horizontal scanlines contain
+  // thin vertical stroke pairs (even very low contrast >= 9/255 passes).
+  if (!lastHadSubtitle) {
+    let activeStrokeRows = 0;
+    for (let y = 1; y < height - 1; y++) {
+      const rowOffset = y * width;
+      let pairsInRow = 0;
+      for (let x = 0; x < width - 3; x++) {
+        const g1 = gray[rowOffset + x + 2] - gray[rowOffset + x];
+        if (g1 >= 9 || g1 <= -9) {
+          for (let span = 1; span <= 8 && x + 2 + span < width; span++) {
+            const g2 = gray[rowOffset + x + 2 + span] - gray[rowOffset + x + span];
+            if ((g1 > 0 && g2 <= -9) || (g1 < 0 && g2 >= 9)) {
+              pairsInRow++;
+              x += span;
+              break;
+            }
+          }
+        }
+      }
+      if (pairsInRow >= 2) {
+        activeStrokeRows++;
+        if (activeStrokeRows >= 2) break;
+      }
+    }
+
+    if (activeStrokeRows < 2) {
+      return { run: false, reason: "empty-scene", gray: prevGray };
+    }
+  }
+
+  return { run: true, reason: "changed", gray };
 }
 
 function levenshteinSimilarity(left, right) {
@@ -101,13 +211,6 @@ function tokenizeWithNormalizedMap(text) {
   return { clean: fixed, rawTokens, normTokens };
 }
 
-/**
- * Determine how nextText relates to previousText:
- * - same: identical or minor OCR fix/punctuation/space variation
- * - partial: subset of an already-read caption (top row only, bottom row only, or edge clip)
- * - extension: two-line continuation or rolling overlap; delta contains ONLY unspoken words
- * - new: independent subtitle
- */
 export function analyzeCaptionRelation(previousText, nextText) {
   const prev = tokenizeWithNormalizedMap(previousText);
   const next = tokenizeWithNormalizedMap(nextText);
@@ -121,7 +224,6 @@ export function analyzeCaptionRelation(previousText, nextText) {
   const prevJoined = prevWords.join(" ");
   const nextJoined = nextWords.join(" ");
 
-  // Same word count or near-identical character string.
   if (prevWords.length === nextWords.length) {
     if (levenshteinSimilarity(prevJoined, nextJoined) >= 0.82) {
       return { type: "same", delta: "" };
@@ -133,7 +235,6 @@ export function analyzeCaptionRelation(previousText, nextText) {
     return { type: "same", delta: "" };
   }
 
-  // Next is longer: check prefix/near-prefix, including a missed 1-2 leading words.
   if (nextWords.length > prevWords.length) {
     const maxOffset = prevWords.length >= 2 ? Math.min(2, nextWords.length - prevWords.length) : 0;
     for (let offset = 0; offset <= maxOffset; offset++) {
@@ -153,7 +254,6 @@ export function analyzeCaptionRelation(previousText, nextText) {
     }
   }
 
-  // Next is shorter: contiguous subsequence anywhere (top row, bottom row, or middle).
   if (nextWords.length < prevWords.length) {
     const winLen = nextWords.length;
     if (winLen >= 2) {
@@ -175,7 +275,6 @@ export function analyzeCaptionRelation(previousText, nextText) {
     }
   }
 
-  // Rolling subtitle overlap: suffix of previous matches prefix of next.
   const maxOverlap = Math.min(prevWords.length, nextWords.length - 1);
   for (let k = maxOverlap; k >= 1; k--) {
     const prevTail = prevWords.slice(prevWords.length - k);
@@ -191,18 +290,25 @@ export function analyzeCaptionRelation(previousText, nextText) {
   return { type: "new", delta: next.clean };
 }
 
+function isSpeakableFragment(text) {
+  if (!text) return false;
+  if (normalizeKey(text).length >= 2) return true;
+  return /[А-Яа-яЁё]/.test(text) && /[!?…]/.test(text);
+}
+
 export class CaptionController {
   constructor(options = {}) {
     this.options = {
-      uncertainHoldMs: 110,
-      emptyGraceMs: 260,
-      clearHistoryAfterEmptyMs: 1300,
-      historyWindowMs: 4800,
-      extensionAfterDoneWindowMs: 2400,
-      maxUnseenAgeMs: 1150,
-      staleAfterUnseenTotalMs: 2000,
-      maxPendingAgeMs: 3200,
-      preemptAfterActiveMs: 3600,
+      fastStartConfidence: 42,
+      emptyGraceMs: 220,
+      clearHistoryAfterEmptyMs: 1250,
+      historyWindowMs: 4600,
+      extensionAfterDoneWindowMs: 2300,
+      maxUnseenAgeMs: 1100,
+      staleAfterUnseenTotalMs: 1900,
+      maxPendingAgeMs: 2900,
+      preemptAfterActiveMs: 2400,
+      preemptSingleAfterActiveMs: 3100,
       ...options
     };
     this.reset();
@@ -237,7 +343,7 @@ export class CaptionController {
       const emptyElapsed = now - this.emptySince;
 
       if (this.candidate && emptyElapsed >= this.options.emptyGraceMs) {
-        if (this.candidate.hits >= 2 || this.candidate.confidence >= 56) {
+        if (this.candidate.hits >= 2 || this.candidate.confidence >= this.options.fastStartConfidence) {
           this.#promoteCandidate(now);
         } else {
           this.candidate = null;
@@ -262,7 +368,6 @@ export class CaptionController {
     let suppressPrefixText = "";
     let speechText = rawText;
 
-    // Compare against active speech (protects against row flicker and extracts row-2 delta).
     if (this.active) {
       const sameSpeakerOrUnknown = !speaker || !this.active.speaker || speaker === this.active.speaker;
       const relActive = analyzeCaptionRelation(this.active.sourceText, rawText);
@@ -275,7 +380,6 @@ export class CaptionController {
       }
     }
 
-    // Compare against pending item and refine it in place.
     if (this.pending) {
       const sameSpeakerOrUnknown = !speaker || !this.pending.speaker || speaker === this.pending.speaker;
       const relPending = analyzeCaptionRelation(this.pending.sourceText, rawText);
@@ -285,7 +389,7 @@ export class CaptionController {
           const updatedSpeech = this.pending.suppressPrefixText
             ? analyzeCaptionRelation(this.pending.suppressPrefixText, rawText).delta
             : rawText;
-          if (updatedSpeech && normalizeKey(updatedSpeech).length >= 2) {
+          if (isSpeakableFragment(updatedSpeech)) {
             this.pending.sourceText = rawText;
             this.pending.speechText = updatedSpeech;
             this.pending.key = key;
@@ -300,7 +404,7 @@ export class CaptionController {
         const updatedSpeech = this.pending.suppressPrefixText
           ? analyzeCaptionRelation(this.pending.suppressPrefixText, rawText).delta
           : rawText;
-        if (updatedSpeech && normalizeKey(updatedSpeech).length >= 2) {
+        if (isSpeakableFragment(updatedSpeech)) {
           this.pending.sourceText = rawText;
           this.pending.speechText = updatedSpeech;
           this.pending.key = key;
@@ -317,7 +421,6 @@ export class CaptionController {
       }
     }
 
-    // Compare against recently spoken history.
     if (!suppressPrefixText && this.history.length) {
       for (let i = 0; i < this.history.length; i++) {
         const entry = this.history[i];
@@ -340,11 +443,10 @@ export class CaptionController {
       }
     }
 
-    if (!speechText || normalizeKey(speechText).length < 2) {
+    if (!isSpeakableFragment(speechText)) {
       return this.getSnapshot(now);
     }
 
-    // Fast-path for clear/two-line captions; briefly stabilize uncertain fragments.
     if (!this.candidate) {
       this.candidate = {
         sourceText: rawText,
@@ -405,7 +507,7 @@ export class CaptionController {
       }
     }
 
-    if (this.#isCandidateReady(this.candidate, now)) {
+    if (this.#isCandidateReady(this.candidate)) {
       this.#promoteCandidate(now);
     }
 
@@ -441,11 +543,20 @@ export class CaptionController {
 
   shouldPreemptActive(now = Date.now()) {
     if (!this.active || !this.pending) return false;
+    // Never interrupt row 1 just to speak its own row-2 continuation.
+    if (this.pending.suppressPrefixText) return false;
+
     const activeElapsed = now - this.active.startedAt;
-    const pendingFresh = now - this.pending.lastSeenAt <= 500;
-    return activeElapsed >= this.options.preemptAfterActiveMs &&
-      pendingFresh &&
-      this.droppedDuringActive >= 1;
+    const pendingFresh = now - this.pending.lastSeenAt <= 550;
+    if (!pendingFresh) return false;
+
+    if (activeElapsed >= this.options.preemptAfterActiveMs && this.droppedDuringActive >= 1) {
+      return true;
+    }
+    if (activeElapsed >= this.options.preemptSingleAfterActiveMs && now - this.pending.firstSeenAt >= 450) {
+      return true;
+    }
+    return false;
   }
 
   onSpeechEnd(now = Date.now()) {
@@ -494,18 +605,12 @@ export class CaptionController {
     };
   }
 
-  #isCandidateReady(cand, now) {
+  #isCandidateReady(cand) {
     if (!cand) return false;
-    if (this.active && cand.confidence >= 52) return true;
-
-    const wordsCount = cand.speechText.split(/\s+/).filter(Boolean).length;
-    const hasTerminalPunct = /[.!?…]$/.test(cand.sourceText);
-
-    if (cand.lineCount >= 2 && cand.confidence >= 56) return true;
-    if (cand.confidence >= 68 && (hasTerminalPunct || wordsCount >= 3)) return true;
-    if (cand.confidence >= 78) return true;
-    if (cand.hits >= 2 && cand.confidence >= 45) return true;
-    if (now - cand.firstSeenAt >= this.options.uncertainHoldMs && cand.confidence >= 52) return true;
+    // Promote on the VERY FIRST scan for any normal Russian subtitle so we never
+    // pay an extra full OCR pass before TTS starts.
+    if (cand.confidence >= this.options.fastStartConfidence) return true;
+    if (cand.hits >= 2 && cand.confidence >= 30) return true;
     return false;
   }
 
