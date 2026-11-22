@@ -107,4 +107,5 @@ body:not(.running) .guide{display:none}
 /* v0.18: recognition toggle state */
 .quick-controls .recognition-toggle{background:#33432b;border-color:#607b43;color:#eaffcf}
 .quick-controls .recognition-toggle[aria-pressed="false"]{background:#303946;border-color:var(--line);color:#fff}
-\n/* v0.20: подсказка внутри рамки удалена, сама рамка остаётся перетаскиваемой */\n
+
+/* v0.20: подсказка внутри рамки удалена, сама рамка остаётся перетаскиваемой */
