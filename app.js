@@ -497,7 +497,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         let runtimeReport = "Runtime: metadata недоступна";
         if (result?.runtime) {
           try {
-            runtimeReport = "Runtime: " + JSON.stringify(result.runtime);
+            runtimeReport = "Runtime: " + JSON.stringify({ bundle: "onnxruntime-web/webgpu", ...result.runtime });
           } catch (_) {
             runtimeReport = "Runtime: метаданные получены";
           }
