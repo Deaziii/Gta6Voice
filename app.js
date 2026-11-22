@@ -591,7 +591,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   async function createOcrWorker() {
     $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Загружаю русскую OCR-модель в проверенном режиме WASM.";
+    $("lastText").textContent = "Загружаю русскую OCR-модель и включаю WebGPU; при ошибке будет WASM.";
     const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
     const engine = await PaddleOCR.create({
       textDetectionModelName: "PP-OCRv5_mobile_det",
@@ -601,9 +601,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       },
       worker: true,
       ortOptions: {
-        // Keep the known-good WASM backend: WebGPU initialized on this device
-        // but failed to return reliable subtitle text.
-        backend: "wasm",
+        // Prefer the dedicated native WebGPU bundle; fall back to WASM when
+        // this browser cannot create a WebGPU inference session.
+        backend: "auto",
+        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.32.0/dist/",
         numThreads: 1,
         simd: true
       }
