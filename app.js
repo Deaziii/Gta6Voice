@@ -470,14 +470,13 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
 
         const [result] = await worker.predict(image, {
-          // PP-OCRv6 Tiny detector: mobile-oriented DB detector with official thresholds.
-          // Keep the proven East-Slavic PP-OCRv5 recognition model unchanged.
+          // Restore the PP-OCRv5 detector that previously read subtitles correctly.
+          // Run it on WASM; the recognizer session is routed to WebGPU by the ORT shim.
           textDetLimitType: "max",
           textDetLimitSideLen: 960,
           textRecScoreThresh: 0.15,
-          textDetThresh: 0.2,
-          textDetBoxThresh: 0.4,
-          textDetUnclipRatio: 1.4
+          textDetThresh: 0.25,
+          textDetBoxThresh: 0.35
         });
         const parsed = parsePaddleResult(result);
 
@@ -503,7 +502,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
               bundle: "onnxruntime-web/webgpu",
               ...result.runtime,
               inputSize: result?.image ? result.image.width + "x" + result.image.height : "unknown",
-              detector: { model: "PP-OCRv6_tiny_det", limitType: "max", limitSideLen: 960, thresh: 0.2, boxThresh: 0.4, unclipRatio: 1.4 }
+              mode: "hybrid-detector-wasm-recognizer-webgpu",
+              detector: { model: "PP-OCRv5_mobile_det", provider: result.runtime.detProvider, limitType: "max", limitSideLen: 960, thresh: 0.25, boxThresh: 0.35 }
             });
           } catch (_) {
             runtimeReport = "Runtime: метаданные получены";
@@ -598,10 +598,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   async function createOcrWorker() {
     $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Загружаю быстрый PP-OCRv6 Tiny детектор и проверенную русскую модель; GPU включён.";
+    $("lastText").textContent = "Загружаю PP-OCRv5 детектор (WASM) и русское распознавание (WebGPU).";
     const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
     const engine = await PaddleOCR.create({
-      textDetectionModelName: "PP-OCRv6_tiny_det",
+      textDetectionModelName: "PP-OCRv5_mobile_det",
       textRecognitionModelName: "eslav_PP-OCRv5_mobile_rec",
       textRecognitionModelAsset: {
         url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
