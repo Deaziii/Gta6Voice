@@ -29,6 +29,19 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Prepare Russian OCR model
+        run: |
+          mkdir -p public/models .model/eslav
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx" \
+            --output .model/eslav/inference.onnx
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml" \
+            --output .model/eslav/inference.yml
+          grep -Eq '^model_name:[[:space:]]*eslav_PP-OCRv5_mobile_rec([[:space:]]|$)' .model/eslav/inference.yml
+          tar --format=ustar -cf public/models/eslav_PP-OCRv5_mobile_rec.tar \
+            -C .model/eslav inference.onnx inference.yml
+          tar -tf public/models/eslav_PP-OCRv5_mobile_rec.tar
       - name: Build site
         run: npm run build
       - name: Configure Pages
