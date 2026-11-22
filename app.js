@@ -469,7 +469,12 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
           continue;
         }
 
-        const [result] = await worker.predict(image);
+        const [result] = await worker.predict(image, {
+          // Keep borderline subtitle rows so the app can stabilize them across frames.
+          textRecScoreThresh: 0.15,
+          textDetThresh: 0.25,
+          textDetBoxThresh: 0.35
+        });
         const parsed = parsePaddleResult(result);
 
         consecutiveOcrErrors = 0;
@@ -493,12 +498,6 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
             lastEnqueuedKey = "";
             lastEmptyStartedAt = 0;
           }
-        } else if ((Number(subtitle.confidence) || 0) < 18) {
-          $("ocrState").textContent = "Слабое распознавание — повторяю";
-          $("lastText").textContent = "Пока не удалось уверенно прочитать субтитры.";
-          previousCandidate = "";
-          candidateCount = 0;
-          consecutiveEmptyReads++;
         } else {
           $("ocrState").textContent = "Субтитры найдены";
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
