@@ -604,7 +604,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         // Prefer the dedicated native WebGPU bundle; fall back to WASM when
         // this browser cannot create a WebGPU inference session.
         backend: "auto",
-        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.32.0/dist/",
+        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/",
         numThreads: 1,
         simd: true
       }
