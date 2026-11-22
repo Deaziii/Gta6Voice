@@ -213,7 +213,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       activeSpeech = false;
       $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
       setQueueCount();
-      window.setTimeout(pumpSpeechQueue, 180);
+      window.setTimeout(pumpSpeechQueue, 40);
     }
 
     utterance.onstart = () => {
@@ -526,10 +526,9 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
           if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
             recentQueuedCaptions.push({ key, time: now });
-            // Не выкидываем ожидающие реплики: иначе быстрые субтитры теряются,
-            // пока Android ещё произносит предыдущую фразу.
-            if (queue.length >= 3) queue.shift();
-            queue.push(subtitle);
+            // FIFO: never discard a detected subtitle while Android is speaking.
+            // Let the queue grow rather than silently skipping dialogue.
+            queue.push({ ...subtitle, queuedAt: now });
             setQueueCount();
             pumpSpeechQueue();
           }
@@ -565,8 +564,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
       }
 
-      // Не молотим OCR без остановки: на пустых/посторонних кадрах делаем длинную паузу.
-      await wait(180);
+      // OCR already takes most of the frame time; keep only a short cooldown.
+      await wait(60);
     }
 
     loopRunning = false;
