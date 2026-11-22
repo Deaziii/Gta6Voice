@@ -502,7 +502,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
             runtimeReport = "Runtime: метаданные получены";
           }
         }
-        $("rawText").textContent = parsed.report + "\\n\\n" + runtimeReport;
+        $("rawText").textContent = parsed.report + "\n\n" + runtimeReport;
         if (!subtitle) {
           $("ocrState").textContent = "Фильтр отсеял шум";
           $("lastText").textContent = "Чистая русская реплика пока не найдена.";
