@@ -1,0 +1,15 @@
+{
+  "name": "gta6-voice",
+  "private": true,
+  "version": "0.35.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@paddleocr/paddleocr-js": "0.4.2"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}
