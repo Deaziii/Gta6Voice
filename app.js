@@ -329,7 +329,7 @@
     return common / Math.max(1, longer.length) >= 0.82;
   }
 
-  function prepareRecognitionImage(darkFallback = false) {
+  function prepareRecognitionImage(invertForOcr = false) {
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (!width || !height) return null;
@@ -355,8 +355,10 @@
     processed.width = Math.round(cropWidth * 1.8);
     processed.height = Math.round(cropHeight * 1.8);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
-    pctx.filter = darkFallback
-      ? "grayscale(1) contrast(1.7) brightness(0.82)"
+    // The alternate pass turns white subtitle glyphs into dark glyphs on a light backing.
+    // The camera preview itself is never changed.
+    pctx.filter = invertForOcr
+      ? "grayscale(1) contrast(1.5) invert(1)"
       : "grayscale(1) contrast(1.35)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
@@ -392,17 +394,17 @@
         let result = await worker.recognize(image);
         let parsed = parseSubtitle(result.data);
 
-        // Bright TV scenes can wash out the subtitle outline. Retry those weak frames
-        // once with a darker, higher-contrast local canvas image (no external service).
+        // If normal polarity is weak, retry with inverted grayscale:
+        // white subtitles become dark letters and the dark subtitle backing becomes light.
         if (!parsed.subtitle || parsed.subtitle.confidence < 45) {
-          const darkerImage = prepareRecognitionImage(true);
-          if (darkerImage) {
-            const darkerResult = await worker.recognize(darkerImage);
-            const darkerParsed = parseSubtitle(darkerResult.data);
-            if (darkerParsed.subtitle &&
-                (!parsed.subtitle || darkerParsed.subtitle.confidence > parsed.subtitle.confidence)) {
-              result = darkerResult;
-              parsed = darkerParsed;
+          const invertedImage = prepareRecognitionImage(true);
+          if (invertedImage) {
+            const invertedResult = await worker.recognize(invertedImage);
+            const invertedParsed = parseSubtitle(invertedResult.data);
+            if (invertedParsed.subtitle &&
+                (!parsed.subtitle || invertedParsed.subtitle.confidence > parsed.subtitle.confidence)) {
+              result = invertedResult;
+              parsed = invertedParsed;
             }
           }
         }
