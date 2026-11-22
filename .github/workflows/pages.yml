@@ -33,12 +33,13 @@ jobs:
         run: |
           mkdir -p public/models .model/eslav
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx" \
+            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true" \
             --output .model/eslav/inference.onnx
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml" \
+            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true" \
             --output .model/eslav/inference.yml
-          grep -Eq '^model_name:[[:space:]]*eslav_PP-OCRv5_mobile_rec([[:space:]]|$)' .model/eslav/inference.yml
+          grep -Eq '^[[:space:]]*model_name:[[:space:]]*eslav_PP-OCRv5_mobile_rec([[:space:]]|$)' .model/eslav/inference.yml
+          test "$(wc -c < .model/eslav/inference.onnx)" -gt 1000000
           tar --format=ustar -cf public/models/eslav_PP-OCRv5_mobile_rec.tar \
             -C .model/eslav inference.onnx inference.yml
           tar -tf public/models/eslav_PP-OCRv5_mobile_rec.tar
