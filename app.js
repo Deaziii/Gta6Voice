@@ -482,10 +482,16 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         const parsed = parsePaddleResult(result);
 
         consecutiveOcrErrors = 0;
-        const measuredMs = Number(result?.metrics?.totalMs);
-        $("latency").textContent = Math.round(
-          Number.isFinite(measuredMs) ? measuredMs : performance.now() - started
-        ) + " мс OCR";
+        const metrics = result?.metrics || {};
+        const totalMs = Number(metrics.totalMs);
+        const detMs = Number(metrics.detMs);
+        const recMs = Number(metrics.recMs);
+        const measuredMs = Number.isFinite(totalMs) ? totalMs : performance.now() - started;
+        const timingParts = [];
+        if (Number.isFinite(detMs)) timingParts.push("дет. " + Math.round(detMs));
+        if (Number.isFinite(recMs)) timingParts.push("текст " + Math.round(recMs));
+        $("latency").textContent = Math.round(measuredMs) + " мс OCR" +
+          (timingParts.length ? " · " + timingParts.join(" / ") : "");
 
         const subtitle = parsed.subtitle;
         $("rawText").textContent = parsed.report;
