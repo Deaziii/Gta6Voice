@@ -591,7 +591,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   async function createOcrWorker() {
     $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Загружаю русскую OCR-модель и выбираю доступный ускоритель: GPU или WASM.";
+    $("lastText").textContent = "Загружаю русскую OCR-модель в проверенном режиме WASM.";
     const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
     const engine = await PaddleOCR.create({
       textDetectionModelName: "PP-OCRv5_mobile_det",
