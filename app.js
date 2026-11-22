@@ -14,6 +14,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
   let recognitionEnabled = true;
   let audioUnlocked = false;
   let activeSpeech = false;
+  let activeSpeechItem = null;
+  let lastSpokenText = "";
   let speechWatchdog = null;
   let voices = [];
   let previousCandidate = "";
@@ -184,7 +186,14 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     }
 
     const item = queue.shift();
+    if (item?.queuedAt && Date.now() - item.queuedAt > 3000) {
+      // Do not play dialogue that has already fallen several seconds behind the scene.
+      setQueueCount();
+      window.setTimeout(pumpSpeechQueue, 0);
+      return;
+    }
     activeSpeech = true;
+    activeSpeechItem = item;
     setQueueCount();
 
     let finished = false;
@@ -210,7 +219,9 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       finished = true;
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = null;
+      lastSpokenText = item?.sourceText || item?.text || lastSpokenText;
       activeSpeech = false;
+      activeSpeechItem = null;
       $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
       setQueueCount();
       window.setTimeout(pumpSpeechQueue, 40);
@@ -245,6 +256,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     if (speechWatchdog) window.clearTimeout(speechWatchdog);
     speechWatchdog = null;
     activeSpeech = false;
+    activeSpeechItem = null;
     if ("speechSynthesis" in window) {
       try { speechSynthesis.cancel(); } catch (_) {}
     }
@@ -412,6 +424,37 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     return 1 - previous[right.length] / maxLength >= 0.84;
   }
 
+  // Compare whole subtitle captions across frames. If OCR first sees the
+  // upper row and only then the lower row, treat the second read as an extension,
+  // not as a completely new line that should be spoken twice.
+  function captionRelation(previousText, nextText) {
+    const previousWords = normalize(previousText).split(/\s+/).filter(Boolean);
+    const nextOriginalWords = clean(nextText).split(/\s+/).filter(Boolean);
+    const nextWords = normalize(nextText).split(/\s+/).filter(Boolean);
+    if (!previousWords.length || !nextWords.length) return { type: "new", delta: nextText };
+
+    const startsWith = (shortWords, longWords) =>
+      shortWords.length <= longWords.length &&
+      shortWords.every((word, index) => word === longWords[index]);
+
+    if (previousWords.length === nextWords.length && startsWith(previousWords, nextWords)) {
+      return { type: "same", delta: "" };
+    }
+    if (nextWords.length > previousWords.length && startsWith(previousWords, nextWords)) {
+      return {
+        type: "extension",
+        delta: nextOriginalWords.slice(previousWords.length).join(" ")
+      };
+    }
+    if (previousWords.length > nextWords.length && startsWith(nextWords, previousWords)) {
+      return { type: "partial", delta: "" };
+    }
+    if (similarCaption(previousWords.join(" "), nextWords.join(" "))) {
+      return { type: "same", delta: "" };
+    }
+    return { type: "new", delta: nextText };
+  }
+
   function prepareRecognitionImage() {
     const width = video.videoWidth;
     const height = video.videoHeight;
@@ -517,6 +560,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
           // Only unlock the last spoken line after it has genuinely disappeared for 5 seconds.
           if (Date.now() - lastEmptyStartedAt >= 5000) {
             lastEnqueuedKey = "";
+            lastSpokenText = "";
+            recentQueuedCaptions = [];
             lastEmptyStartedAt = 0;
           }
         } else {
@@ -535,23 +580,60 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
           }
 
           const now = Date.now();
-          // Короткое окно защищает от повторного чтения одного кадра,
-          // но не блокирует похожую реплику, сказанную позже.
-          recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 3500);
-          const wasQueuedRecently = recentQueuedCaptions.some(item => similarCaption(key, item.key));
-          const isNewPhrase = (!lastEnqueuedKey || !similarCaption(key, lastEnqueuedKey)) && !wasQueuedRecently;
-          // Fast subtitles may exist for only one OCR cycle.
-          // Accept a single clear read; require two matching reads only when confidence is middling.
+          // Keep only a tiny dedupe window. The active/pending caption below is
+          // the main duplicate guard; a long history can hide a genuinely repeated line.
+          recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 1800);
+
+          // While speech is playing, retain at most ONE pending item. Every new
+          // independent caption replaces the older pending one ("latest wins"),
+          // so the voice never spends the next 20 seconds reading an old queue.
+          const pendingItem = queue.length ? queue[0] : null;
+          const referenceItem = pendingItem || activeSpeechItem;
+          const referenceText = referenceItem
+            ? (referenceItem.sourceText || referenceItem.text)
+            : (lastSpokenText || "");
+          const referenceKey = referenceItem?.key || normalize(referenceText) || lastEnqueuedKey;
+          const relation = captionRelation(referenceText || referenceKey, subtitle.text);
+          const wasQueuedRecently = relation.type === "new" &&
+            recentQueuedCaptions.some(item => similarCaption(key, item.key));
+          // Accept a clear single read; require a second matching read only for middling confidence.
           const stableOrClear = subtitle.confidence >= 45 || candidateCount >= 2;
 
-          if (isNewPhrase && stableOrClear) {
-            lastEnqueuedKey = key;
-            recentQueuedCaptions.push({ key, time: now });
-            // FIFO: never discard a detected subtitle while Android is speaking.
-            // Let the queue grow rather than silently skipping dialogue.
-            queue.push({ ...subtitle, queuedAt: now });
-            setQueueCount();
-            pumpSpeechQueue();
+          if (stableOrClear && relation.type !== "same" && relation.type !== "partial" && !wasQueuedRecently) {
+            let speechText = subtitle.text;
+            let suppressPrefixText = "";
+            if (relation.type === "extension") {
+              if (pendingItem) {
+                // The pending caption has not been spoken yet: update it to the complete
+                // two-row caption, preserving any prefix already spoken by the active item.
+                suppressPrefixText = pendingItem.suppressPrefixText || "";
+                speechText = suppressPrefixText
+                  ? captionRelation(suppressPrefixText, subtitle.text).delta
+                  : subtitle.text;
+              } else {
+                // The first row may already be speaking (or just finished). Speak only
+                // the newly appeared words from the second row, not the whole caption again.
+                suppressPrefixText = referenceText;
+                speechText = relation.delta;
+              }
+            }
+
+            if (speechText && normalize(speechText).length >= 2) {
+              const speechItem = {
+                ...subtitle,
+                text: speechText,
+                sourceText: subtitle.text,
+                suppressPrefixText,
+                key,
+                queuedAt: now
+              };
+              // Replace, never append: one active phrase plus one fresh pending phrase maximum.
+              queue.splice(0, queue.length, speechItem);
+              lastEnqueuedKey = key;
+              recentQueuedCaptions.push({ key, time: now });
+              setQueueCount();
+              pumpSpeechQueue();
+            }
           }
         }
       } catch (error) {
