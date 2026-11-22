@@ -6,7 +6,6 @@ const HOMOGLYPH_MAP = {
 const NON_HOMOGLYPH_LATIN = /[DFGIJLNQRSUVWZbdfghijklmnqrstuvwz]/;
 const VALID_SINGLE_LETTER_WORDS = new Set(["а", "и", "о", "у", "я", "в", "к", "с", "ж", "б"]);
 
-// Pure-homoglyph Russian words that OCR often emits in Latin script (e.g. "- Bay!" -> "- Вау!")
 const UNAMBIGUOUS_HOMOGLYPH_RUSSIAN = new Set([
   "ну", "неа", "ух", "хех", "ха", "хаха", "хохо", "как", "так", "там", "тут", "кто", "сто", "ау", "ее"
 ]);
@@ -14,19 +13,50 @@ const CONTEXTUAL_HOMOGLYPH_EXCLAMATIONS = new Set([
   "вау", "ах", "ох", "не", "вот", "кот", "рот", "пот", "тот"
 ]);
 
-// Small OCR-specific transliteration fallbacks. They are only applied when the
-// line already has Russian/dialogue context, so ordinary English stays Latin.
-const ROMANIZED_RUSSIAN_OCR = new Map([
-  ["kak", "как"],
-  ["tam", "там"]
+export const ROLES = {
+  JASON: "jason",
+  LUCIA: "lucia",
+  MALE_NPC: "male_npc",
+  FEMALE_NPC: "female_npc"
+};
+
+export const ROLE_META = {
+  jason: { id: "jason", label: "Джейсон · ГГ (М)", short: "Джейсон", gender: "m", main: true },
+  lucia: { id: "lucia", label: "Люсия · ГГ (Ж)", short: "Люсия", gender: "f", main: true },
+  male_npc: { id: "male_npc", label: "Персонаж · 2 план (М)", short: "Персонаж М", gender: "m", main: false },
+  female_npc: { id: "female_npc", label: "Персонаж · 2 план (Ж)", short: "Персонаж Ж", gender: "f", main: false }
+};
+
+const FEMALE_SPEAKER_KEYWORDS = new Set([
+  "lucia", "люсия", "лусия", "лиза", "lisa", "сара", "sarah", "мария", "маша", "анна", "аня",
+  "катя", "елена", "лена", "ольга", "оля", "наташа", "таня", "юля", "даша", "ксюша", "вика",
+  "нина", "вера", "соня", "алиса", "ева", "эмма", "рейчел", "лора", "стефани", "тамара",
+  "девушка", "женщина", "дама", "леди", "мама", "мать", "сестра", "бабушка", "тётя", "тетя",
+  "жена", "подруга", "невеста", "хозяйка", "продавщица", "официантка", "медсестра", "ведущая",
+  "актриса", "певица", "соседка", "старуха", "девчонка", "блондинка", "брюнетка", "диспетчерша"
 ]);
+
+const MALE_A_EXCEPTIONS = new Set([
+  "никита", "илья", "лука", "фома", "кузьма", "савва", "данила", "гаврила", "миша", "гриша",
+  "ваня", "петя", "коля", "вася", "федя", "стёпа", "степа", "лёша", "леша", "паша", "даня",
+  "серёжа", "сережа", "дима", "костя", "толя", "боря", "витя", "гена", "жора", "гоша", "сёма",
+  "папа", "батя", "дядя", "дедушка", "мужчина", "парнишка", "мальчишка", "судья", "староста",
+  "убийца", "вышибала", "заводила", "коллега", "бедолага", "бродяга", "работяга", "пьяница"
+]);
+
+const NON_VERB_LA_WORDS = new Set([
+  "дела", "слова", "тела", "стекла", "стёкла", "числа", "кресла", "зеркала",
+  "правила", "крыла", "села", "угла", "стола", "ствола", "узла", "орла", "козла", "осла"
+]);
+
+const MASC_FIRST_PERSON_RE = /(?:^|[^A-Za-zА-Яа-яЁё])я\s+(?:не\s+|бы\s+|уже\s+|же\s+|ведь\s+|просто\s+|так\s+|тут\s+|там\s+|сам\s+|тоже\s+|сейчас\s+|чуть\s+|ещё\s+|еще\s+){0,2}(?:понял|сказал|сделал|видел|увидел|слышал|услышал|знал|узнал|думал|подумал|решил|пришёл|пришел|ушёл|ушел|вышел|зашёл|зашел|нашёл|нашел|взял|отдал|купил|продал|украл|смог|хотел|забыл|успел|ждал|попал|упал|встал|сел|лёг|лег|дал|стал|жил|был|стрелял|ехал|приехал|уехал|бежал|обещал|просил|спросил|ответил|звонил|проверил|оставил|потерял|бросил|готов|сам|должен|обязан|занят|свободен|уверен|согласен|прав|виноват|устал|жив|здоров|пьян|один)(?![A-Za-zА-Яа-яЁё])/i;
+
+const FEM_SHORT_ADJ_RE = /(?:^|[^A-Za-zА-Яа-яЁё])я\s+(?:не\s+|бы\s+|уже\s+|же\s+|ведь\s+|просто\s+|так\s+|очень\s+|совсем\s+|тоже\s+){0,2}(?:сама|готова|рада|должна|обязана|занята|свободна|уверена|согласна|права|виновата|устала|жива|здорова|пьяна|одна)(?![A-Za-zА-Яа-яЁё])/i;
+
+const FEM_PAST_VERB_RE = /(?:^|[^A-Za-zА-Яа-яЁё])я\s+(?:не\s+|бы\s+|уже\s+|же\s+|ведь\s+|просто\s+|так\s+|тут\s+|там\s+|сама\s+|тоже\s+|сейчас\s+|чуть\s+|ещё\s+|еще\s+){0,2}([а-яё]{3,}(?:ла|лась))(?![A-Za-zА-Яа-яЁё])/i;
 
 export const cleanText = value => (value || "").replace(/[|_]/g, " ").replace(/\s+/g, " ").trim();
 
-/**
- * Fix random mid-word uppercase Cyrillic glitches from OCR (e.g. "ровОрИТ" -> "роворит")
- * while keeping real ALL-CAPS acronyms ("США", "ФБР") and capitalized words ("Господь") intact.
- */
 export function fixMidWordCase(text) {
   return text.replace(/[А-Яа-яЁё]{2,}/g, word => {
     const hasLower = /[а-яё]/.test(word);
@@ -42,10 +72,6 @@ function mapHomoglyphToken(token) {
   return token.replace(/[ABCEHKMOPTXYaceopxy]/g, ch => HOMOGLYPH_MAP[ch] || ch);
 }
 
-/**
- * Fix Latin lookalike characters produced by OCR inside Russian subtitle lines,
- * including short pure-homoglyph Russian exclamations like "- Bay!" -> "- Вау!".
- */
 export function normalizeRussianHomoglyphs(value, options = {}) {
   const cleaned = cleanText(value);
   if (!cleaned) return "";
@@ -55,20 +81,7 @@ export function normalizeRussianHomoglyphs(value, options = {}) {
 
   const mapped = cleaned.split(" ").map(token => {
     const core = token.replace(/[^A-Za-zА-Яа-яЁё]/g, "");
-    if (!core) return token;
-
-    const coreLower = core.toLocaleLowerCase("ru-RU");
-    if (frameHasCyrillic || cyrillicCount >= 1 || hasDialoguePunct) {
-      const romanized = ROMANIZED_RUSSIAN_OCR.get(coreLower);
-      if (romanized) {
-        const replacement = /^[A-Z]/.test(core)
-          ? romanized[0].toLocaleUpperCase("ru-RU") + romanized.slice(1)
-          : romanized;
-        return token.replace(core, replacement);
-      }
-    }
-
-    if (NON_HOMOGLYPH_LATIN.test(core)) return token;
+    if (!core || NON_HOMOGLYPH_LATIN.test(core)) return token;
 
     const hasCyrillic = /[А-Яа-яЁё]/.test(core);
     if (hasCyrillic) return mapHomoglyphToken(token);
@@ -91,9 +104,8 @@ export function normalizeRussianHomoglyphs(value, options = {}) {
 }
 
 /**
- * Shape text specifically for fast, natural Android SpeechSynthesis delivery:
- * removes dead 400ms pauses on dashes/ellipses/mid-line exclamation breaks while
- * preserving natural clause rhythm and question intonation.
+ * Fast speech formatter for offline SpeechSynthesis: strips artificial 400ms pauses
+ * on dashes/ellipses/mid-sentence stops while keeping question intonation.
  */
 export function formatForFastSpeech(text) {
   let out = cleanText(text);
@@ -114,6 +126,19 @@ export function formatForFastSpeech(text) {
     out += "?";
   }
   return out;
+}
+
+/**
+ * Natural speech formatter for neural AI TTS (ElevenLabs): keeps emotional ! and ?
+ * cues that drive expressive voice acting while cleaning OCR dashes and artifacts.
+ */
+export function formatForAiSpeech(text) {
+  let out = cleanText(text);
+  if (!out) return "";
+  out = out.replace(/^[-—–]+\s*/, "");
+  out = out.replace(/\s+[-—–]+\s+/g, ", ");
+  out = out.replace(/\.{3,}/g, "…");
+  return out.trim();
 }
 
 export const normalizeKey = value => normalizeRussianHomoglyphs(value)
@@ -151,6 +176,207 @@ export function isRussianSubtitleLine(line, options = {}) {
   return true;
 }
 
+/**
+ * Extract speaker prefix from a subtitle line (e.g. "Jason: ...", "Люсия: ...",
+ * "Охранник: ...", "[Диспетчер] ...", "Лиза: ...") without false-matching normal prose.
+ */
+export function extractSpeakerTag(rawLine) {
+  const line = cleanText(rawLine);
+  if (!line) return { speaker: "", text: "" };
+
+  // 1. Known GTA protagonists & recurring cast (allow colon or dash)
+  const heroMatch = line.match(
+    /^(Jason|Lucia|Джейсон|Люсия|Лусия|Raul|Рауль|Cal|Кэл|Boobie|Буби|Brian|Брайан|Tourist|Турист)\s*[:：—–-]\s*(.*)$/i
+  );
+  if (heroMatch) {
+    return { speaker: cleanText(heroMatch[1]), text: cleanText(heroMatch[2]) };
+  }
+
+  // 2. Bracketed speaker tag: [Коп] Текст / (Девушка) Текст
+  const bracketMatch = line.match(/^(?:\[([^\]]{2,22})\]|\(([^)]{2,22})\))\s*[:：—–-]?\s*(.*)$/);
+  if (bracketMatch) {
+    const label = cleanText(bracketMatch[1] || bracketMatch[2]);
+    if (/^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9\s'’-]*$/.test(label) && label.split(/\s+/).length <= 2) {
+      return { speaker: label, text: cleanText(bracketMatch[3]) };
+    }
+  }
+
+  // 3. Explicit "Имя:" or "Роль:" with colon (capitalized 1-2 word speaker label)
+  const colonMatch = line.match(/^([A-ZА-ЯЁ][A-Za-zА-Яа-яЁё'’-]{1,16}(?:\s+[A-ZА-ЯЁa-zа-яё0-9'’-]{1,14})?)\s*[:：]\s*(.*)$/);
+  if (colonMatch) {
+    const candidate = cleanText(colonMatch[1]);
+    const rest = cleanText(colonMatch[2]);
+    // Ignore time-like or common introductory words like "Внимание:", "Вопрос:", "Ответ:", "Пример:"
+    if (!/^(внимание|вопрос|ответ|итого|место|время|цель|задание|совет|подсказка)$/i.test(candidate)) {
+      return { speaker: candidate, text: rest };
+    }
+  }
+
+  return { speaker: "", text: line };
+}
+
+function classifyExplicitSpeakerName(speaker) {
+  const norm = cleanText(speaker).toLocaleLowerCase("ru-RU");
+  if (!norm) return null;
+  if (/^(?:jason|джейсон)(?:$|\s)/.test(norm)) return ROLES.JASON;
+  if (/^(lucia|люсия|лусия)\b/.test(norm)) return ROLES.LUCIA;
+
+  const words = norm.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    if (FEMALE_SPEAKER_KEYWORDS.has(w)) return ROLES.FEMALE_NPC;
+    if (MALE_A_EXCEPTIONS.has(w)) return ROLES.MALE_NPC;
+  }
+
+  const first = words[0] || "";
+  if (/^[а-яё]{3,}(?:а|я|ия|ша|ка|ца|нья)$/.test(first) && !MALE_A_EXCEPTIONS.has(first)) {
+    return ROLES.FEMALE_NPC;
+  }
+  return ROLES.MALE_NPC;
+}
+
+function detectTextGenderCue(text) {
+  const value = cleanText(text);
+  if (!value) return null;
+
+  if (FEM_SHORT_ADJ_RE.test(value)) return "f";
+  if (/^(?:сама|готова|рада|поняла|сказала|забыла|устала|согласна)(?![A-Za-zА-Яа-яЁё])/i.test(value)) return "f";
+
+  const femVerbMatch = value.match(FEM_PAST_VERB_RE);
+  if (femVerbMatch) {
+    const verb = femVerbMatch[1].toLocaleLowerCase("ru-RU");
+    if (!NON_VERB_LA_WORDS.has(verb)) return "f";
+  }
+
+  if (MASC_FIRST_PERSON_RE.test(value)) return "m";
+  if (/^(?:сам\s+знаю|понял|согласен|готов)(?![A-Za-zА-Яа-яЁё])/i.test(value)) return "m";
+
+  // Conversational address cues (if calling listener "детка/милая/красотка" -> likely male; "милый/красавчик" -> likely female)
+  if (/(?:^|[^A-Za-zА-Яа-яЁё])(?:детка|милая|дорогая|красотка|сестрёнка|подруга)(?=$|[^A-Za-zА-Яа-яЁё])/i.test(value)) return "m";
+  if (/(?:^|[^A-Za-zА-Яа-яЁё])(?:милый|дорогой|красавчик)(?=$|[^A-Za-zА-Яа-яЁё])/i.test(value)) return "f";
+
+  return null;
+}
+
+export function alternateRole(previousRole, castMode = "gta_duo") {
+  if (castMode === "cinema_quad") {
+    switch (previousRole) {
+      case ROLES.JASON: return ROLES.LUCIA;
+      case ROLES.LUCIA: return ROLES.MALE_NPC;
+      case ROLES.MALE_NPC: return ROLES.FEMALE_NPC;
+      default: return ROLES.JASON;
+    }
+  }
+  switch (previousRole) {
+    case ROLES.JASON: return ROLES.LUCIA;
+    case ROLES.LUCIA: return ROLES.JASON;
+    case ROLES.MALE_NPC: return ROLES.JASON;
+    case ROLES.FEMALE_NPC: return ROLES.LUCIA;
+    default: return ROLES.JASON;
+  }
+}
+
+/**
+ * Zero-latency character & gender inference for Russian subtitles:
+ * maps speaker tags, Russian verb/adjective morphology, vocative exclusions,
+ * and dialogue-dash turn switches to one of 4 distinct voice slots.
+ */
+export function inferSpeakerRole({
+  text = "",
+  speaker = "",
+  previousRole = "",
+  castMode = "gta_duo",
+  forceSwitch = false
+} = {}) {
+  // 1. Explicit speaker name always wins
+  const byName = classifyExplicitSpeakerName(speaker);
+  if (byName) return byName;
+
+  const cleaned = cleanText(text);
+  const startsWithDash = /^[-—–]/.test(cleaned);
+  const shouldSwitch = forceSwitch || (startsWithDash && Boolean(previousRole));
+
+  // 2. Direct vocative address exclusion ("Джейсон, ..." means speaker is NOT Jason)
+  const addressesJason = /(?:^|[,!?…\s])(?:джейсон|jason)(?:[,!?…]|$)/i.test(cleaned);
+  const addressesLucia = /(?:^|[,!?…\s])(?:люсия|лусия|lucia)(?:[,!?…]|$)/i.test(cleaned);
+  const genderCue = detectTextGenderCue(cleaned);
+
+  if (addressesJason && !addressesLucia) {
+    if (genderCue === "m") return ROLES.MALE_NPC;
+    return ROLES.LUCIA;
+  }
+  if (addressesLucia && !addressesJason) {
+    if (genderCue === "f") return ROLES.FEMALE_NPC;
+    return ROLES.JASON;
+  }
+
+  // 3. Grammatical gender cue in Russian text
+  if (genderCue === "f") {
+    if (shouldSwitch && previousRole === ROLES.LUCIA) return ROLES.FEMALE_NPC;
+    if (!shouldSwitch && previousRole === ROLES.FEMALE_NPC) return ROLES.FEMALE_NPC;
+    return ROLES.LUCIA;
+  }
+  if (genderCue === "m") {
+    if (shouldSwitch && previousRole === ROLES.JASON) return ROLES.MALE_NPC;
+    if (!shouldSwitch && previousRole === ROLES.MALE_NPC) return ROLES.MALE_NPC;
+    return ROLES.JASON;
+  }
+
+  // 4. Dialogue turn switch ("- Вау! / - Офигенно!")
+  if (shouldSwitch && previousRole) {
+    return alternateRole(previousRole, castMode);
+  }
+
+  // 5. Maintain current speaker continuity or default to Jason
+  return previousRole || ROLES.JASON;
+}
+
+/**
+ * Build spoken turns for a frame's accepted subtitle lines.
+ * If a two-line frame contains a dash dialogue exchange ("- Вау!" / "- Офигенно! Круто!"),
+ * returns two distinct role-tagged turns so two characters speak back-to-back.
+ */
+export function buildDialogueTurns(acceptedLines, { previousRole = "", castMode = "gta_duo" } = {}) {
+  if (!Array.isArray(acceptedLines) || !acceptedLines.length) return [];
+
+  const groups = [];
+  for (let i = 0; i < acceptedLines.length; i++) {
+    const line = acceptedLines[i];
+    const lineStartsWithDash = /^[-—–]/.test(line.text);
+    const hasNewSpeaker = Boolean(line.speaker) && groups.length > 0 && line.speaker !== groups[groups.length - 1].speaker;
+
+    if (groups.length === 0 || (i > 0 && (lineStartsWithDash || hasNewSpeaker))) {
+      groups.push({
+        speaker: line.speaker || "",
+        texts: [line.text],
+        startsWithDash: lineStartsWithDash
+      });
+    } else {
+      groups[groups.length - 1].texts.push(line.text);
+      if (!groups[groups.length - 1].speaker && line.speaker) {
+        groups[groups.length - 1].speaker = line.speaker;
+      }
+    }
+  }
+
+  let runningRole = previousRole;
+  return groups.map((group, idx) => {
+    const joined = cleanText(group.texts.join(" "));
+    const role = inferSpeakerRole({
+      text: joined,
+      speaker: group.speaker,
+      previousRole: runningRole,
+      castMode,
+      forceSwitch: idx > 0 || (group.startsWithDash && Boolean(runningRole))
+    });
+    runningRole = role;
+    return {
+      text: joined,
+      speaker: group.speaker,
+      role
+    };
+  });
+}
+
 const GRID_COLS = 24;
 const GRID_ROWS = 6;
 const GRID_SIZE = GRID_COLS * GRID_ROWS;
@@ -178,15 +404,6 @@ function shiftedGridDistance(normNow, normPrev) {
   return best;
 }
 
-/**
- * Bilateral Stem Gate (<0.3ms on 192x48):
- * 1. Detects thin bright vertical letter stems (`g - max(minLeft, minRight)`), completely
- *    ignoring DLP projector rainbow bands, step edges (walls/clothes), and smooth actor motion.
- * 2. Keeps the WASM worker 100% idle while an already-read subtitle stays on screen
- *    (with +-1 cell handheld shake tolerance), eliminating random 1-1.3s busy-worker stalls.
- * 3. Returns tight normalized crop bounds `[x0, y0, x1, y1]` around active text strokes
- *    so `PP-OCRv5_mobile_det` scans a smaller, cleaner region free of peripheral noise.
- */
 export function evaluateFrameGate(rgba, width, height, state = {}, now = Date.now()) {
   const pixelCount = width * height;
   if (!rgba || rgba.length < pixelCount * 4) {
@@ -303,14 +520,11 @@ export function evaluateFrameGate(rgba, width, height, state = {}, now = Date.no
   const cellRatio = activeCells / Math.max(1, prevActiveCells);
   const dist = shiftedGridDistance(stemNorm, prevStemNorm);
   const forceEveryMs = lastHadSubtitle ? 1900 : 1200;
-  // Handheld shake and DLP brightness waves can redistribute a few detected
-  // stems even when the subtitle itself has not changed.
-  const sameSubtitleDistance = 0.45;
 
   if (
     cellRatio >= 0.74 &&
     cellRatio <= 1.34 &&
-    dist < sameSubtitleDistance &&
+    dist < 0.24 &&
     now - lastFullOcrAt < forceEveryMs
   ) {
     return {
@@ -459,9 +673,14 @@ export class CaptionController {
       maxPendingAgeMs: 2600,
       preemptAfterActiveMs: 1450,
       preemptSingleAfterActiveMs: 1950,
+      castMode: "gta_duo",
       ...options
     };
     this.reset();
+  }
+
+  setCastMode(mode) {
+    this.options.castMode = mode === "cinema_quad" ? "cinema_quad" : "gta_duo";
   }
 
   reset() {
@@ -469,6 +688,7 @@ export class CaptionController {
     this.pending = null;
     this.active = null;
     this.history = [];
+    this.lastRole = "";
     this.emptySince = null;
     this.droppedDuringActive = 0;
     this.stats = {
@@ -480,6 +700,10 @@ export class CaptionController {
     };
   }
 
+  peekPending() {
+    return this.pending;
+  }
+
   observe(observation, now = Date.now()) {
     this.history = this.history.filter(entry => now - entry.completedAt <= this.options.historyWindowMs);
 
@@ -487,6 +711,7 @@ export class CaptionController {
     const speaker = observation?.speaker || "";
     const confidence = Number(observation?.confidence) || 0;
     const lineCount = Math.max(1, Number(observation?.lineCount) || 1);
+    const inputTurns = Array.isArray(observation?.turns) ? observation.turns : null;
 
     if (!rawText) {
       if (this.emptySince === null) this.emptySince = now;
@@ -517,6 +742,7 @@ export class CaptionController {
 
     let suppressPrefixText = "";
     let speechText = rawText;
+    let basePreviousRole = this.active?.role || this.pending?.role || this.lastRole;
 
     if (this.active) {
       const sameSpeakerOrUnknown = !speaker || !this.active.speaker || speaker === this.active.speaker;
@@ -527,6 +753,7 @@ export class CaptionController {
       if (sameSpeakerOrUnknown && relActive.type === "extension") {
         suppressPrefixText = this.active.sourceText;
         speechText = relActive.delta;
+        basePreviousRole = this.active.role;
       }
     }
 
@@ -545,6 +772,8 @@ export class CaptionController {
             this.pending.key = key;
             this.pending.confidence = confidence;
             this.pending.lineCount = Math.max(this.pending.lineCount, lineCount);
+            this.pending.turns = this.#resolveTurns(updatedSpeech, speaker, inputTurns, suppressPrefixText, basePreviousRole);
+            this.pending.role = this.pending.turns[0]?.role || this.pending.role;
           }
         }
         this.candidate = null;
@@ -561,6 +790,14 @@ export class CaptionController {
           this.pending.lastSeenAt = now;
           this.pending.confidence = Math.max(this.pending.confidence, confidence);
           this.pending.lineCount = Math.max(this.pending.lineCount, lineCount);
+          this.pending.turns = this.#resolveTurns(
+            updatedSpeech,
+            speaker,
+            this.pending.suppressPrefixText ? null : inputTurns,
+            this.pending.suppressPrefixText,
+            basePreviousRole
+          );
+          this.pending.role = this.pending.turns[0]?.role || this.pending.role;
           this.candidate = null;
           return this.getSnapshot(now);
         }
@@ -588,6 +825,7 @@ export class CaptionController {
         ) {
           suppressPrefixText = entry.text;
           speechText = relHist.delta;
+          basePreviousRole = entry.role || basePreviousRole;
           break;
         }
       }
@@ -597,6 +835,15 @@ export class CaptionController {
       return this.getSnapshot(now);
     }
 
+    const resolvedTurns = this.#resolveTurns(
+      speechText,
+      speaker,
+      suppressPrefixText ? null : inputTurns,
+      suppressPrefixText,
+      basePreviousRole
+    );
+    const primaryRole = resolvedTurns[0]?.role || ROLES.JASON;
+
     if (!this.candidate) {
       this.candidate = {
         sourceText: rawText,
@@ -604,6 +851,8 @@ export class CaptionController {
         suppressPrefixText,
         key,
         speaker,
+        role: primaryRole,
+        turns: resolvedTurns,
         confidence,
         lineCount,
         firstSeenAt: now,
@@ -622,6 +871,8 @@ export class CaptionController {
           this.candidate.suppressPrefixText = suppressPrefixText;
           this.candidate.key = key;
           this.candidate.confidence = confidence;
+          this.candidate.role = primaryRole;
+          this.candidate.turns = resolvedTurns;
           if (speaker) this.candidate.speaker = speaker;
         }
       } else if (relCand.type === "extension") {
@@ -633,6 +884,8 @@ export class CaptionController {
         this.candidate.hits += 1;
         this.candidate.lineCount = Math.max(this.candidate.lineCount, lineCount);
         this.candidate.confidence = Math.max(this.candidate.confidence, confidence);
+        this.candidate.role = primaryRole;
+        this.candidate.turns = resolvedTurns;
         if (speaker) this.candidate.speaker = speaker;
       } else if (relCand.type === "partial") {
         this.candidate.lastSeenAt = now;
@@ -648,6 +901,8 @@ export class CaptionController {
           suppressPrefixText,
           key,
           speaker,
+          role: primaryRole,
+          turns: resolvedTurns,
           confidence,
           lineCount,
           firstSeenAt: now,
@@ -685,6 +940,8 @@ export class CaptionController {
       startedAt: now,
       lagMs
     };
+    const lastTurnRole = this.active.turns?.[this.active.turns.length - 1]?.role || this.active.role;
+    if (lastTurnRole) this.lastRole = lastTurnRole;
     this.pending = null;
     this.droppedDuringActive = 0;
     this.stats.lastLagMs = lagMs;
@@ -713,10 +970,13 @@ export class CaptionController {
     const finished = this.active;
     this.stats.spoken += 1;
     this.stats.lastSpeechMs = Math.max(0, now - finished.startedAt);
+    const finalRole = finished.turns?.[finished.turns.length - 1]?.role || finished.role || "";
+    if (finalRole) this.lastRole = finalRole;
     this.history.unshift({
       text: finished.sourceText,
       key: finished.key,
       speaker: finished.speaker || "",
+      role: finalRole,
       completedAt: now
     });
     if (this.history.length > 4) this.history.length = 4;
@@ -744,6 +1004,7 @@ export class CaptionController {
       hasActive: Boolean(this.active),
       hasPending: Boolean(this.pending),
       hasCandidate: Boolean(this.candidate),
+      activeRole: this.active?.role || null,
       activeElapsedMs: this.active ? Math.max(0, now - this.active.startedAt) : null,
       pendingAgeMs: this.pending ? Math.max(0, now - this.pending.firstSeenAt) : null,
       lastLagMs: this.stats.lastLagMs,
@@ -752,6 +1013,33 @@ export class CaptionController {
       stale: this.stats.stale,
       spoken: this.stats.spoken
     };
+  }
+
+  #resolveTurns(speechText, speaker, inputTurns, suppressPrefixText, previousRole) {
+    if (Array.isArray(inputTurns) && inputTurns.length > 0 && !suppressPrefixText) {
+      let prev = previousRole;
+      return inputTurns.map((turn, index) => {
+        const role = turn.role || inferSpeakerRole({
+          text: turn.text,
+          speaker: turn.speaker || speaker,
+          previousRole: prev,
+          castMode: this.options.castMode,
+          forceSwitch: index > 0
+        });
+        prev = role;
+        return { text: turn.text, speaker: turn.speaker || speaker, role };
+      });
+    }
+
+    const deltaStartsWithDash = Boolean(suppressPrefixText) && /^[-—–]/.test(cleanText(speechText));
+    const role = inferSpeakerRole({
+      text: speechText,
+      speaker,
+      previousRole,
+      castMode: this.options.castMode,
+      forceSwitch: deltaStartsWithDash
+    });
+    return [{ text: speechText, speaker, role }];
   }
 
   #isCandidateReady(cand) {

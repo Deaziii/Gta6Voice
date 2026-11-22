@@ -1,17 +1,22 @@
 import { PaddleOCR } from "@paddleocr/paddleocr-js";
 import {
   CaptionController,
+  ROLES,
+  ROLE_META,
+  buildDialogueTurns,
   cleanText,
   evaluateFrameGate,
-  formatForFastSpeech,
+  extractSpeakerTag,
   isRussianSubtitleLine,
   normalizeRussianHomoglyphs
 } from "./captionController.js";
+import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
 (() => {
   "use strict";
   const $ = id => document.getElementById(id);
-  const video = $("camera"), canvas = $("frame");
+  const video = $("camera");
+  const canvas = $("frame");
   const ctx = canvas.getContext("2d", { willReadFrequently: true, alpha: false });
 
   const GATE_W = 192;
@@ -22,24 +27,31 @@ import {
   const gateCtx = gateCanvas.getContext("2d", { willReadFrequently: true, alpha: false });
 
   const SPEED_PRESETS = {
-    ultra: { maxW: 480, maxH: 224, detLimit: 448, minUpscale: 1.15, aspectX: 0.86 },
+    lightning: { maxW: 416, maxH: 192, detLimit: 416, minUpscale: 1.08, aspectX: 0.80 },
+    ultra: { maxW: 480, maxH: 224, detLimit: 448, minUpscale: 1.15, aspectX: 0.85 },
     turbo: { maxW: 576, maxH: 256, detLimit: 512, minUpscale: 1.25, aspectX: 0.92 },
-    balanced: { maxW: 704, maxH: 320, detLimit: 640, minUpscale: 1.45, aspectX: 1.0 }
+    balanced: { maxW: 704, maxH: 320, detLimit: 640, minUpscale: 1.45, aspectX: 1.00 }
   };
 
-  const PREFS_KEY = "gta6voice_prefs_v54";
+  const ROLE_TEST_PHRASES = {
+    [ROLES.JASON]: "Я проверил чёрный вход. Держись за мной, уходим!",
+    [ROLES.LUCIA]: "Я сама разберусь! Джейсон, заводи машину!",
+    [ROLES.MALE_NPC]: "Стоять! Ни с места, руки за голову!",
+    [ROLES.FEMALE_NPC]: "Вы с ума сошли? Немедленно убирайтесь отсюда!"
+  };
+
+  const PREFS_KEY = "gta6voice_prefs_v55";
 
   let stream = null;
   let worker = null;
+  let workerWarm = false;
+  let workerInitPromise = null;
   let scanning = false;
   let loopRunning = false;
   let speechEnabled = true;
   let recognitionEnabled = true;
-  let audioUnlocked = false;
   let activeSpeech = false;
   let activeSpeechStartedAt = 0;
-  let speechWatchdog = null;
-  let voices = [];
   let cachedRuntimeReport = "";
   let consecutiveOcrErrors = 0;
   let lastProcessedVideoTime = -1;
@@ -48,14 +60,84 @@ import {
   let prevActiveCells = 0;
   let lastFullOcrAt = 0;
   let lastHadSubtitle = false;
-  let keepAliveAudioCtx = null;
+  let deferredInstallPrompt = null;
 
   const captionController = new CaptionController();
+  const voiceEngine = new VoiceEngine({
+    audioElement: $("aiAudio"),
+    onStateChange: info => {
+      renderRoleBadge(info.role, info.engine);
+      const engineLabel = info.engine === "ai"
+        ? "ИИ Live"
+        : info.engine === "ai-cache"
+          ? "ИИ Кэш"
+          : info.engine === "fallback"
+            ? "Офлайн-подхват"
+            : "Офлайн";
+      $("speechState").textContent = "Говорит · " + engineLabel + " (" + info.rate.toFixed(2) + "×)";
+    }
+  });
 
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const round32 = (value, min = 32) => Math.max(min, Math.round(value / 32) * 32);
   const setStatus = value => { $("status").textContent = value; };
+
+  function waitNextVideoFrame(maxWaitMs = 20) {
+    return new Promise(resolve => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const timer = window.setTimeout(done, maxWaitMs);
+      if (typeof video.requestVideoFrameCallback === "function") {
+        try {
+          video.requestVideoFrameCallback(() => {
+            window.clearTimeout(timer);
+            done();
+          });
+        } catch (_) {}
+      }
+    });
+  }
+
+  function renderRoleBadge(role, engineType = "") {
+    const badge = $("activeRoleBadge");
+    const engineChip = $("activeEngineChip");
+    if (badge) {
+      const meta = ROLE_META[role];
+      badge.className = "role-badge " + (meta ? "role-" + meta.id : "role-idle");
+      badge.textContent = meta ? meta.label : "Персонаж: авто";
+    }
+    if (engineChip) {
+      if (!engineType) {
+        engineChip.textContent = voiceEngine.mode === "elevenlabs" ? "ИИ ГОТОВ" : "ОФЛАЙН";
+        engineChip.className = "engine-chip " + (voiceEngine.mode === "elevenlabs" ? "chip-ai" : "chip-offline");
+      } else if (engineType === "ai" || engineType === "ai-cache") {
+        engineChip.textContent = engineType === "ai-cache" ? "ИИ · КЭШ" : "ИИ · LIVE";
+        engineChip.className = "engine-chip chip-ai";
+      } else if (engineType === "fallback") {
+        engineChip.textContent = "ПОДХВАТ";
+        engineChip.className = "engine-chip chip-warn";
+      } else {
+        engineChip.textContent = "ОФЛАЙН";
+        engineChip.className = "engine-chip chip-offline";
+      }
+    }
+  }
+
+  function syncEngineTabsUI() {
+    const isAi = voiceEngine.mode === "elevenlabs";
+    $("modeOfflineBtn").classList.toggle("active", !isAi);
+    $("modeOfflineBtn").setAttribute("aria-selected", !isAi ? "true" : "false");
+    $("modeAiBtn").classList.toggle("active", isAi);
+    $("modeAiBtn").setAttribute("aria-selected", isAi ? "true" : "false");
+    $("offlineVoicePanel").hidden = isAi;
+    $("aiVoicePanel").hidden = !isAi;
+    renderRoleBadge(captionController.getSnapshot().activeRole || "", "");
+  }
 
   function savePrefs() {
     try {
@@ -64,13 +146,28 @@ import {
         roiTop: Number($("roiTop").value),
         roiWidth: Number($("roiWidth").value),
         roiHeight: Number($("roiHeight").value),
-        ocrSpeed: $("ocrSpeed")?.value || "ultra",
+        ocrSpeed: $("ocrSpeed").value,
         rate: Number($("rate").value),
         volume: Number($("volume").value),
-        showNames: Boolean($("showNames").checked)
+        showNames: Boolean($("showNames").checked),
+        castMode: $("castMode").value,
+        voiceMode: voiceEngine.mode,
+        aiModel: $("aiModel").value,
+        aiFallback: Boolean($("aiFallback").checked),
+        elevenApiKey: $("elevenApiKey").value.trim(),
+        offlineVoices: { ...voiceEngine.offlineSelections },
+        aiVoices: { ...voiceEngine.aiSelections }
       };
       window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
     } catch (_) {}
+  }
+
+  function syncVoicePacePreset(rateVal) {
+    const paceSelect = $("voicePace");
+    const match = [...paceSelect.options].find(
+      opt => opt.value !== "custom" && Math.abs(Number(opt.value) - rateVal) < 0.03
+    );
+    paceSelect.value = match ? match.value : "custom";
   }
 
   function loadPrefs() {
@@ -78,66 +175,120 @@ import {
       const raw = window.localStorage.getItem(PREFS_KEY);
       if (!raw) return;
       const prefs = JSON.parse(raw);
+
       if (Number.isFinite(prefs.roiLeft)) $("roiLeft").value = String(prefs.roiLeft);
       if (Number.isFinite(prefs.roiTop)) $("roiTop").value = String(prefs.roiTop);
       if (Number.isFinite(prefs.roiWidth)) $("roiWidth").value = String(prefs.roiWidth);
       if (Number.isFinite(prefs.roiHeight)) $("roiHeight").value = String(prefs.roiHeight);
-      if (prefs.ocrSpeed && SPEED_PRESETS[prefs.ocrSpeed] && $("ocrSpeed")) {
-        $("ocrSpeed").value = prefs.ocrSpeed;
-      }
+      if (prefs.ocrSpeed && SPEED_PRESETS[prefs.ocrSpeed]) $("ocrSpeed").value = prefs.ocrSpeed;
+
       if (Number.isFinite(prefs.rate)) {
         const r = clamp(prefs.rate, 1.0, 2.2);
         $("rate").value = String(r);
         $("rateValue").textContent = r.toFixed(2) + "×";
+        voiceEngine.rate = r;
         syncVoicePacePreset(r);
       }
       if (Number.isFinite(prefs.volume)) {
         const v = clamp(prefs.volume, 0.2, 1.0);
         $("volume").value = String(v);
         $("volumeValue").textContent = Math.round(v * 100) + "%";
+        voiceEngine.volume = v;
       }
-      if (typeof prefs.showNames === "boolean") {
-        $("showNames").checked = prefs.showNames;
+      if (typeof prefs.showNames === "boolean") $("showNames").checked = prefs.showNames;
+      if (prefs.castMode === "cinema_quad" || prefs.castMode === "gta_duo") {
+        $("castMode").value = prefs.castMode;
+        captionController.setCastMode(prefs.castMode);
+      }
+      if (prefs.voiceMode === "elevenlabs" || prefs.voiceMode === "offline") {
+        voiceEngine.mode = prefs.voiceMode;
+      }
+      if (prefs.aiModel) {
+        $("aiModel").value = prefs.aiModel;
+        voiceEngine.aiModel = prefs.aiModel;
+      }
+      if (typeof prefs.aiFallback === "boolean") {
+        $("aiFallback").checked = prefs.aiFallback;
+        voiceEngine.fallbackToOffline = prefs.aiFallback;
+      }
+      if (typeof prefs.elevenApiKey === "string") {
+        $("elevenApiKey").value = prefs.elevenApiKey;
+        voiceEngine.apiKey = prefs.elevenApiKey;
+      }
+      if (prefs.offlineVoices && typeof prefs.offlineVoices === "object") {
+        Object.assign(voiceEngine.offlineSelections, prefs.offlineVoices);
+      }
+      if (prefs.aiVoices && typeof prefs.aiVoices === "object") {
+        Object.assign(voiceEngine.aiSelections, prefs.aiVoices);
       }
     } catch (_) {}
   }
 
-  function syncVoicePacePreset(rateVal) {
-    const paceSelect = $("voicePace");
-    if (!paceSelect) return;
-    const match = [...paceSelect.options].find(
-      opt => opt.value !== "custom" && Math.abs(Number(opt.value) - rateVal) < 0.03
-    );
-    paceSelect.value = match ? match.value : "custom";
+  function populateOfflineVoiceSelects() {
+    const ruVoices = voiceEngine.refreshSystemVoices();
+    const map = [
+      [ROLES.JASON, "offlineJasonVoice", "Авто · Глубокий мужской"],
+      [ROLES.LUCIA, "offlineLuciaVoice", "Авто · Живой женский"],
+      [ROLES.MALE_NPC, "offlineMaleNpcVoice", "Авто · Мужской 2 план"],
+      [ROLES.FEMALE_NPC, "offlineFemaleNpcVoice", "Авто · Женский 2 план"]
+    ];
+
+    for (const [role, selectId, autoLabel] of map) {
+      const select = $(selectId);
+      const saved = voiceEngine.offlineSelections[role] || "";
+      select.innerHTML = "";
+
+      const autoOpt = document.createElement("option");
+      autoOpt.value = "";
+      autoOpt.textContent = autoLabel;
+      select.appendChild(autoOpt);
+
+      for (const entry of ruVoices) {
+        const opt = document.createElement("option");
+        opt.value = entry.voice.voiceURI || entry.voice.name;
+        const localTag = entry.voice.localService ? " · офлайн" : " · сеть";
+        const gTag = entry.gender === "f" ? " (Ж)" : entry.gender === "m" ? " (М)" : "";
+        opt.textContent = entry.voice.name + gTag + localTag;
+        select.appendChild(opt);
+      }
+
+      if (saved && [...select.options].some(o => o.value === saved)) {
+        select.value = saved;
+      }
+      voiceEngine.offlineSelections[role] = select.value;
+    }
+
+    const localCount = ruVoices.filter(v => v.voice.localService).length;
+    $("offlineVoiceSummary").textContent = ruVoices.length
+      ? ("Найдено русских голосов: " + ruVoices.length + " (офлайн: " + localCount + ")")
+      : "Русские голоса загружаются системой Android…";
   }
 
-  /**
-   * Keep Bluetooth A2DP / Android audio output awake with an inaudible signal
-   * while scanning so the first word of a new subtitle never suffers BT wakeup lag.
-   */
-  function startAudioKeepAlive() {
-    if (keepAliveAudioCtx) return;
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const actx = new AudioCtx();
-      const osc = actx.createOscillator();
-      const gain = actx.createGain();
-      osc.frequency.value = 40;
-      gain.gain.value = 0.00005;
-      osc.connect(gain);
-      gain.connect(actx.destination);
-      osc.start();
-      if (actx.state === "suspended") actx.resume().catch(() => {});
-      keepAliveAudioCtx = actx;
-    } catch (_) {}
-  }
+  function populateAiVoiceSelects() {
+    const allAi = voiceEngine.getAllAiVoices();
+    const map = [
+      [ROLES.JASON, "aiJasonVoice"],
+      [ROLES.LUCIA, "aiLuciaVoice"],
+      [ROLES.MALE_NPC, "aiMaleNpcVoice"],
+      [ROLES.FEMALE_NPC, "aiFemaleNpcVoice"]
+    ];
 
-  function stopAudioKeepAlive() {
-    if (!keepAliveAudioCtx) return;
-    const actx = keepAliveAudioCtx;
-    keepAliveAudioCtx = null;
-    try { actx.close(); } catch (_) {}
+    for (const [role, selectId] of map) {
+      const select = $(selectId);
+      const desired = voiceEngine.aiSelections[role] || DEFAULT_AI_ROLE_VOICES[role];
+      select.innerHTML = "";
+
+      for (const item of allAi) {
+        const opt = document.createElement("option");
+        opt.value = item.id;
+        opt.textContent = item.name;
+        select.appendChild(opt);
+      }
+      if ([...select.options].some(o => o.value === desired)) {
+        select.value = desired;
+      }
+      voiceEngine.aiSelections[role] = select.value;
+    }
   }
 
   function updateDiagnostics(now = Date.now()) {
@@ -204,17 +355,26 @@ import {
     if (persist) savePrefs();
   }
 
+  // Initialize saved preferences & voice lists
   loadPrefs();
+  populateOfflineVoiceSelects();
+  populateAiVoiceSelects();
+  syncEngineTabsUI();
   updateSpeechButton();
   updateRecognitionButton();
   updateRoi(false);
   updateDiagnostics();
 
+  if ("speechSynthesis" in window) {
+    speechSynthesis.onvoiceschanged = populateOfflineVoiceSelects;
+  }
+
+  // Bind ROI inputs & handles
   ["roiLeft", "roiTop", "roiWidth", "roiHeight"].forEach(id => {
     $(id).addEventListener("input", () => updateRoi(true));
   });
 
-  $("slimRoi")?.addEventListener("click", () => {
+  $("slimRoi").addEventListener("click", () => {
     const currentTop = Number($("roiTop").value);
     const currentHeight = Number($("roiHeight").value);
     const center = currentTop + currentHeight / 2;
@@ -225,21 +385,6 @@ import {
     $("roiTop").value = String(clamp(Math.round(center - targetHeight / 2), 0, 100 - targetHeight));
     updateRoi(true);
   });
-
-  $("ocrSpeed")?.addEventListener("change", () => {
-    invalidateFrameGate();
-    savePrefs();
-  });
-
-  $("voicePace")?.addEventListener("change", event => {
-    if (event.target.value === "custom") return;
-    const rateVal = clamp(Number(event.target.value), 1.0, 2.2);
-    $("rate").value = String(rateVal);
-    $("rateValue").textContent = rateVal.toFixed(2) + "×";
-    savePrefs();
-  });
-
-  $("showNames")?.addEventListener("change", savePrefs);
 
   let roiPointer = null;
   const guide = $("guide");
@@ -310,60 +455,152 @@ import {
   guide.addEventListener("pointerup", finishRoiPointer);
   guide.addEventListener("pointercancel", finishRoiPointer);
 
-  function refreshVoices() {
-    voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
-    ["defaultVoice", "jasonVoice", "luciaVoice"].forEach(id => {
-      const select = $(id);
-      const previous = select.value;
-      select.innerHTML = "";
-      const first = document.createElement("option");
-      first.value = "";
-      first.textContent = id === "defaultVoice" ? "Быстрый русский голос Android" : "Автоматически";
-      select.appendChild(first);
-      voices.forEach((voice, index) => {
-        if (/^ru/i.test(voice.lang)) {
-          const option = document.createElement("option");
-          option.value = String(index);
-          option.textContent = voice.name + (voice.localService ? " · локальный" : "") + " · " + voice.lang;
-          select.appendChild(option);
-        }
-      });
-      if ([...select.options].some(option => option.value === previous)) select.value = previous;
+  // Voice Studio & Engine bindings
+  $("modeOfflineBtn").addEventListener("click", () => {
+    voiceEngine.mode = "offline";
+    syncEngineTabsUI();
+    savePrefs();
+  });
+
+  $("modeAiBtn").addEventListener("click", () => {
+    voiceEngine.mode = "elevenlabs";
+    syncEngineTabsUI();
+    savePrefs();
+  });
+
+  $("castMode").addEventListener("change", event => {
+    captionController.setCastMode(event.target.value);
+    savePrefs();
+  });
+
+  $("ocrSpeed").addEventListener("change", () => {
+    invalidateFrameGate();
+    savePrefs();
+  });
+
+  $("voicePace").addEventListener("change", event => {
+    if (event.target.value === "custom") return;
+    const rateVal = clamp(Number(event.target.value), 1.0, 2.2);
+    voiceEngine.rate = rateVal;
+    $("rate").value = String(rateVal);
+    $("rateValue").textContent = rateVal.toFixed(2) + "×";
+    savePrefs();
+  });
+
+  $("rate").addEventListener("input", event => {
+    const val = Number(event.target.value);
+    voiceEngine.rate = val;
+    $("rateValue").textContent = val.toFixed(2) + "×";
+    syncVoicePacePreset(val);
+    savePrefs();
+  });
+
+  $("volume").addEventListener("input", event => {
+    const val = Number(event.target.value);
+    voiceEngine.volume = val;
+    $("volumeValue").textContent = Math.round(val * 100) + "%";
+    savePrefs();
+  });
+
+  $("showNames").addEventListener("change", savePrefs);
+
+  [
+    [ROLES.JASON, "offlineJasonVoice"],
+    [ROLES.LUCIA, "offlineLuciaVoice"],
+    [ROLES.MALE_NPC, "offlineMaleNpcVoice"],
+    [ROLES.FEMALE_NPC, "offlineFemaleNpcVoice"]
+  ].forEach(([role, id]) => {
+    $(id).addEventListener("change", event => {
+      voiceEngine.offlineSelections[role] = event.target.value;
+      savePrefs();
     });
-  }
+  });
 
-  if ("speechSynthesis" in window) {
-    speechSynthesis.onvoiceschanged = refreshVoices;
-    refreshVoices();
-  }
+  [
+    [ROLES.JASON, "aiJasonVoice"],
+    [ROLES.LUCIA, "aiLuciaVoice"],
+    [ROLES.MALE_NPC, "aiMaleNpcVoice"],
+    [ROLES.FEMALE_NPC, "aiFemaleNpcVoice"]
+  ].forEach(([role, id]) => {
+    $(id).addEventListener("change", event => {
+      voiceEngine.aiSelections[role] = event.target.value;
+      savePrefs();
+    });
+  });
 
-  function voiceFor(speaker) {
-    const id = /lucia/i.test(speaker) ? "luciaVoice" : /jason/i.test(speaker) ? "jasonVoice" : "defaultVoice";
-    const selected = $(id).value || (id !== "defaultVoice" ? $("defaultVoice").value : "");
-    if (selected) return voices[Number(selected)] || null;
-    // Prefer local low-latency Russian voice first to avoid any cloud-TTS synthesis delay
-    return voices.find(voice => /^ru/i.test(voice.lang) && voice.localService) ||
-      voices.find(voice => /^ru/i.test(voice.lang)) ||
-      null;
+  $("elevenApiKey").addEventListener("input", event => {
+    voiceEngine.apiKey = event.target.value.trim();
+    savePrefs();
+  });
+
+  $("toggleKeyVis").addEventListener("click", () => {
+    const input = $("elevenApiKey");
+    const hidden = input.type === "password";
+    input.type = hidden ? "text" : "password";
+    $("toggleKeyVis").textContent = hidden ? "Скрыть" : "Показать";
+  });
+
+  $("aiModel").addEventListener("change", event => {
+    voiceEngine.aiModel = event.target.value;
+    savePrefs();
+  });
+
+  $("aiFallback").addEventListener("change", event => {
+    voiceEngine.fallbackToOffline = event.target.checked;
+    savePrefs();
+  });
+
+  $("loadAiVoices").addEventListener("click", async () => {
+    const btn = $("loadAiVoices");
+    btn.disabled = true;
+    $("aiStatusText").textContent = "Загружаю голоса ElevenLabs…";
+    try {
+      const list = await voiceEngine.fetchAccountVoices($("elevenApiKey").value);
+      populateAiVoiceSelects();
+      savePrefs();
+      $("aiStatusText").textContent = "Голоса загружены (" + list.length + " доступно).";
+    } catch (err) {
+      $("aiStatusText").textContent = err.message || String(err);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.querySelectorAll("[data-preview-role]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const role = btn.getAttribute("data-preview-role") || ROLES.JASON;
+      speakStandalone(ROLE_TEST_PHRASES[role] || ROLE_TEST_PHRASES[ROLES.JASON], role);
+    });
+  });
+
+  function cancelSpeechAndQueue() {
+    captionController.clearQueueAndSpeech();
+    voiceEngine.cancel();
+    activeSpeech = false;
+    activeSpeechStartedAt = 0;
+    renderRoleBadge("", "");
+    updateDiagnostics();
   }
 
   function pumpSpeechQueue() {
     const now = Date.now();
-    if (!speechEnabled || !audioUnlocked || !("speechSynthesis" in window)) {
+    if (!speechEnabled || !voiceEngine.audioUnlocked) {
       updateDiagnostics(now);
       return;
     }
 
+    const pendingPreview = captionController.peekPending();
+    if (activeSpeech && pendingPreview) {
+      voiceEngine.prefetch(pendingPreview);
+    }
+
     if (activeSpeech) {
       if (captionController.shouldPreemptActive(now)) {
-        if (speechWatchdog) window.clearTimeout(speechWatchdog);
-        speechWatchdog = null;
+        voiceEngine.cancel();
         captionController.onSpeechEnd(now);
         activeSpeech = false;
         activeSpeechStartedAt = 0;
-        try { speechSynthesis.cancel(); } catch (_) {}
-        // Tiny 12ms yield avoids Android Chrome's cancel()+speak() same-tick drop bug
-        window.setTimeout(pumpSpeechQueue, 12);
+        window.setTimeout(pumpSpeechQueue, 10);
         return;
       }
       updateDiagnostics(now);
@@ -378,84 +615,45 @@ import {
 
     activeSpeech = true;
     activeSpeechStartedAt = now;
+    renderRoleBadge(item.role, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
     updateDiagnostics(now);
 
-    let finished = false;
-    const spokenString = formatForFastSpeech(item.speechText) || item.speechText;
-    const utterance = new SpeechSynthesisUtterance(spokenString);
-    utterance.lang = "ru-RU";
-    const baseRate = Number($("rate").value);
     const snap = captionController.getSnapshot(now);
     const catchUpBoost = (snap.hasPending || item.lagMs > 1100)
-      ? 0.25
+      ? 0.24
       : item.lagMs > 450
         ? 0.12
         : 0;
-    utterance.rate = clamp(baseRate + catchUpBoost, 1.0, 2.2);
-    utterance.pitch = 1.02;
-    utterance.volume = Number($("volume").value);
-    const voice = voiceFor(item.speaker);
-    if (voice) utterance.voice = voice;
 
-    const armWatchdog = () => {
-      if (speechWatchdog) window.clearTimeout(speechWatchdog);
-      speechWatchdog = window.setTimeout(() => {
-        if (finished) return;
-        console.warn("TTS watchdog: forcing queue recovery");
-        try { speechSynthesis.cancel(); } catch (_) {}
-        finishSpeech();
-      }, 9000);
-    };
+    // If another line is already pending right behind, prefetch its AI audio immediately
+    const nextWaiting = captionController.peekPending();
+    if (nextWaiting) voiceEngine.prefetch(nextWaiting);
 
-    function finishSpeech() {
-      if (finished) return;
-      finished = true;
+    voiceEngine.speakItem(item, {
+      catchUpBoost,
+      onStart: () => {
+        activeSpeechStartedAt = Date.now();
+        updateDiagnostics(activeSpeechStartedAt);
+      }
+    }).catch(err => {
+      console.warn("Playback error:", err);
+      $("speechState").textContent = "Ошибка озвучки";
+    }).finally(() => {
       const endedAt = Date.now();
-      if (speechWatchdog) window.clearTimeout(speechWatchdog);
-      speechWatchdog = null;
       captionController.onSpeechEnd(endedAt);
       activeSpeech = false;
       activeSpeechStartedAt = 0;
-      $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
+      if (speechEnabled) {
+        $("speechState").textContent = "Готова";
+      } else {
+        $("speechState").textContent = "Остановлена";
+      }
+      if (!captionController.peekPending()) {
+        renderRoleBadge("", "");
+      }
       updateDiagnostics(endedAt);
       pumpSpeechQueue();
-    }
-
-    utterance.onstart = () => {
-      activeSpeechStartedAt = Date.now();
-      $("speechState").textContent = "Говорит (" + utterance.rate.toFixed(2) + "×)";
-      updateDiagnostics(activeSpeechStartedAt);
-      armWatchdog();
-    };
-    utterance.onboundary = armWatchdog;
-    utterance.onend = finishSpeech;
-    utterance.onerror = event => {
-      console.warn("Speech synthesis error", event);
-      $("speechState").textContent = "Повторяю очередь после ошибки";
-      finishSpeech();
-    };
-
-    try {
-      if (speechSynthesis.paused) speechSynthesis.resume();
-      speechSynthesis.speak(utterance);
-      armWatchdog();
-    } catch (error) {
-      console.error(error);
-      $("speechState").textContent = "Ошибка TTS";
-      finishSpeech();
-    }
-  }
-
-  function cancelSpeechAndQueue() {
-    captionController.clearQueueAndSpeech();
-    if (speechWatchdog) window.clearTimeout(speechWatchdog);
-    speechWatchdog = null;
-    activeSpeech = false;
-    activeSpeechStartedAt = 0;
-    if ("speechSynthesis" in window) {
-      try { speechSynthesis.cancel(); } catch (_) {}
-    }
-    updateDiagnostics();
+    });
   }
 
   function parsePaddleResult(result) {
@@ -523,66 +721,84 @@ import {
   }
 
   function parseSubtitle(data) {
-    const namePattern = /^(Jason|Lucia|Tourist)\s*[:：-]?\s*/i;
     const lines = Array.isArray(data.lines) && data.lines.length
       ? data.lines.map(line => ({ text: cleanText(line.text), confidence: Number(line.confidence) }))
       : (data.text || "").split(/\r?\n/).map(text => ({ text: cleanText(text), confidence: Number(data.confidence) }));
 
     const frameHasCyrillic = lines.some(line => /[А-Яа-яЁё]/.test(line.text));
+    const parseSpeakerNames = $("showNames").checked;
 
-    let speaker = "";
+    let primarySpeaker = "";
     const accepted = [];
     const report = [];
+
     for (const line of lines) {
       if (!line.text) continue;
       let lineText = line.text;
-      if ($("showNames").checked) {
-        const match = lineText.match(namePattern);
-        if (match) {
-          speaker = match[1];
-          lineText = cleanText(lineText.slice(match[0].length));
+      let lineSpeaker = "";
+
+      if (parseSpeakerNames) {
+        const extracted = extractSpeakerTag(lineText);
+        if (extracted.speaker) {
+          lineSpeaker = extracted.speaker;
+          if (!primarySpeaker) primarySpeaker = lineSpeaker;
+          lineText = extracted.text;
           if (!lineText) {
             report.push("NAME · " + line.text);
             continue;
           }
         }
       }
+
       lineText = normalizeRussianHomoglyphs(lineText, { frameHasCyrillic });
       const ok = isRussianSubtitleLine(lineText, { frameHasCyrillic });
       report.push((ok ? "OK" : "SKIP") + " [" +
         (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") +
-        "%] " + lineText);
-      if (ok) accepted.push({ text: lineText, confidence: line.confidence });
+        "%] " + (lineSpeaker ? lineSpeaker + ": " : "") + lineText);
+
+      if (ok) {
+        const sanitized = lineText
+          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\-]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (sanitized.length >= 2) {
+          accepted.push({ text: sanitized, speaker: lineSpeaker, confidence: line.confidence });
+        }
+      }
     }
 
-    const text = cleanText(accepted.map(line => line.text).join(" "))
-      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»\-]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (text.length < 2 || text.length > 180) {
+    const text = cleanText(accepted.map(line => line.text).join(" "));
+    if (text.length < 2 || text.length > 190) {
       return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
     }
+
     const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
     const confidence = confidences.length
       ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
       : Number(data.confidence) || 0;
+
+    const turns = buildDialogueTurns(accepted, {
+      previousRole: captionController.lastRole,
+      castMode: $("castMode").value
+    });
+
     return {
-      subtitle: { text, speaker, confidence, lineCount: accepted.length },
+      subtitle: {
+        text,
+        speaker: primarySpeaker,
+        confidence,
+        lineCount: accepted.length,
+        turns
+      },
       report: report.join("\n")
     };
   }
 
   function currentSpeedPreset() {
-    const key = $("ocrSpeed")?.value || "ultra";
+    const key = $("ocrSpeed").value || "ultra";
     return SPEED_PRESETS[key] || SPEED_PRESETS.ultra;
   }
 
-  /**
-   * 1) Bilateral Stem Gate (<0.3ms on 192x48) skips empty screens and unchanged subtitles
-   *    even when DLP projector bands or background actors move behind the text.
-   * 2) Tight auto-crop trims empty side margins around active text columns so DBNet and
-   *    recognition only process actual subtitle pixels without background noise boxes.
-   */
   function prepareRecognitionImage(now) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
@@ -629,7 +845,7 @@ import {
     const csw = Math.max(24, Math.min(vw - csx, Math.ceil(sw * (crop.x1 - crop.x0))));
     const csh = Math.max(16, Math.min(vh - csy, Math.ceil(sh * (crop.y1 - crop.y0))));
 
-    const outW = round32(Math.min(preset.maxW, csw * baseScale * preset.aspectX), 160);
+    const outW = round32(Math.min(preset.maxW, csw * baseScale * preset.aspectX), 128);
     const outH = round32(Math.min(preset.maxH, csh * baseScale), 64);
 
     if (canvas.width !== outW || canvas.height !== outH) {
@@ -652,19 +868,77 @@ import {
     };
   }
 
+  async function ensureOcrWorker() {
+    if (worker) return worker;
+    if (workerInitPromise) return workerInitPromise;
+
+    workerInitPromise = (async () => {
+      $("ocrState").textContent = "Загрузка OCR…";
+      const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
+      const safeThreads = window.crossOriginIsolated
+        ? Math.min(4, Math.max(1, Number(navigator.hardwareConcurrency) || 1))
+        : 1;
+      const engine = await PaddleOCR.create({
+        textDetectionModelName: "PP-OCRv5_mobile_det",
+        textRecognitionModelName: "eslav_PP-OCRv5_mobile_rec",
+        textRecognitionModelAsset: {
+          url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
+        },
+        worker: true,
+        ortOptions: {
+          backend: "wasm",
+          numThreads: safeThreads,
+          simd: true
+        }
+      });
+
+      // One-time 64x32 WASM JIT warm-up eliminates 500ms spike on first real subtitle
+      if (!workerWarm) {
+        try {
+          const warm = document.createElement("canvas");
+          warm.width = 96;
+          warm.height = 32;
+          const wctx = warm.getContext("2d");
+          wctx.fillStyle = "#111";
+          wctx.fillRect(0, 0, 96, 32);
+          wctx.fillStyle = "#fff";
+          wctx.font = "bold 18px sans-serif";
+          wctx.fillText("Да", 12, 22);
+          await engine.predict(warm, {
+            textDetLimitSideLen: 128,
+            textDetLimitType: "max",
+            textDetThresh: 0.28,
+            textDetBoxThresh: 0.45
+          });
+          workerWarm = true;
+        } catch (_) {}
+      }
+
+      worker = engine;
+      refreshOfflineCacheStatus();
+      return engine;
+    })();
+
+    try {
+      return await workerInitPromise;
+    } finally {
+      workerInitPromise = null;
+    }
+  }
+
   async function scanLoop() {
     if (loopRunning) return;
     loopRunning = true;
 
     while (scanning) {
       if (!recognitionEnabled) {
-        $("ocrState").textContent = "Распознавание остановлено";
-        await wait(120);
+        $("ocrState").textContent = "Пауза OCR";
+        await wait(110);
         continue;
       }
       if (!worker || video.readyState < 2 || !video.videoWidth) {
-        $("ocrState").textContent = "Жду кадр камеры…";
-        await wait(90);
+        $("ocrState").textContent = "Жду кадр…";
+        await wait(80);
         continue;
       }
 
@@ -674,7 +948,7 @@ import {
         const prepared = prepareRecognitionImage(captureNow);
         if (prepared.kind === "invalid") {
           $("ocrState").textContent = "Проверь рамку";
-          await wait(160);
+          await wait(150);
           continue;
         }
         if (prepared.kind === "skip") {
@@ -683,12 +957,12 @@ import {
               lastHadSubtitle = false;
               prevStemNorm = null;
               prevActiveCells = 0;
-              $("ocrState").textContent = "Ожидание реплики";
+              $("ocrState").textContent = "Жду реплику";
             }
             captionController.observe({ text: "", confidence: 0 }, captureNow);
             pumpSpeechQueue();
           }
-          await wait(18);
+          await waitNextVideoFrame(20);
           continue;
         }
 
@@ -697,7 +971,7 @@ import {
           textDetLimitType: "max",
           textRecScoreThresh: 0.22,
           textDetThresh: 0.28,
-          textDetBoxThresh: 0.46
+          textDetBoxThresh: 0.48
         });
         const parsed = parsePaddleResult(result);
 
@@ -727,8 +1001,8 @@ import {
                 cachedRuntimeReport = "Runtime: " + JSON.stringify({
                   bundle: "onnxruntime-web",
                   ...result.runtime,
-                  mode: "known-good-wasm-v0.54",
-                  detector: { model: "PP-OCRv5_mobile_det", thresh: 0.25, boxThresh: 0.35 }
+                  mode: "known-good-wasm-v0.55",
+                  detector: { model: "PP-OCRv5_mobile_det", thresh: 0.28, boxThresh: 0.48 }
                 });
               } catch (_) {
                 cachedRuntimeReport = "Runtime: метаданные получены";
@@ -744,13 +1018,19 @@ import {
         const subtitle = parsed.subtitle;
         if (!subtitle) {
           lastHadSubtitle = false;
-          $("ocrState").textContent = "Ожидание реплики";
-          $("lastText").textContent = "Чистая русская реплика пока не найдена.";
+          $("ocrState").textContent = "Жду реплику";
           captionController.observe({ text: "", confidence: 0 }, now);
         } else {
           lastHadSubtitle = true;
           $("ocrState").textContent = "Субтитры найдены";
-          $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
+          const displayRole = subtitle.turns?.[0]?.role;
+          const speakerPrefix = subtitle.speaker
+            ? subtitle.speaker + ": "
+            : "";
+          $("lastText").textContent = speakerPrefix + subtitle.text;
+          if (!activeSpeech && displayRole) {
+            renderRoleBadge(displayRole, "");
+          }
           captionController.observe(subtitle, now);
         }
         pumpSpeechQueue();
@@ -759,79 +1039,44 @@ import {
         invalidateFrameGate();
         console.error("OCR error", error);
         const errorText = error && error.message ? error.message : String(error);
-        $("ocrState").textContent = "Ошибка OCR · повторяю";
+        $("ocrState").textContent = "Ошибка OCR · повтор";
         $("lastText").textContent = "Сбой распознавания: " + errorText;
         if (consecutiveOcrErrors >= 2 && scanning) {
-          $("ocrState").textContent = "Перезапускаю PaddleOCR…";
+          $("ocrState").textContent = "Перезапуск OCR…";
           try {
             const failedWorker = worker;
             worker = null;
+            workerWarm = false;
             if (failedWorker) {
-              try { await failedWorker.dispose(); } catch (terminateError) {
-                console.warn("PaddleOCR dispose:", terminateError);
-              }
+              try { await failedWorker.dispose(); } catch (_) {}
             }
             if (scanning) {
-              worker = await createOcrWorker();
+              await ensureOcrWorker();
               consecutiveOcrErrors = 0;
-              $("ocrState").textContent = "PaddleOCR перезапущен";
-              $("lastText").textContent = "Распознавание восстановлено. Жду субтитры…";
+              $("ocrState").textContent = "OCR восстановлен";
             }
           } catch (restartError) {
             console.error("OCR restart failed", restartError);
-            $("ocrState").textContent = "Не удалось перезапустить OCR";
-            $("lastText").textContent = "Ошибка перезапуска: " +
-              (restartError && restartError.message ? restartError.message : String(restartError));
+            $("ocrState").textContent = "Сбой перезапуска OCR";
           }
         }
       }
 
-      await wait(4);
+      await wait(2);
     }
 
     loopRunning = false;
   }
 
-  async function createOcrWorker() {
-    $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Загружаю проверенную русскую OCR-модель в штатном режиме WASM.";
-    const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
-    const safeThreads = window.crossOriginIsolated
-      ? Math.min(4, Math.max(1, Number(navigator.hardwareConcurrency) || 1))
-      : 1;
-    const engine = await PaddleOCR.create({
-      textDetectionModelName: "PP-OCRv5_mobile_det",
-      textRecognitionModelName: "eslav_PP-OCRv5_mobile_rec",
-      textRecognitionModelAsset: {
-        url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
-      },
-      worker: true,
-      ortOptions: {
-        backend: "wasm",
-        numThreads: safeThreads,
-        simd: true
-      }
-    });
-    return engine;
-  }
-
   $("startCamera").addEventListener("click", async () => {
-    audioUnlocked = true;
-    startAudioKeepAlive();
+    voiceEngine.unlockAudio();
     updateSpeechButton();
-    if ("speechSynthesis" in window) {
-      try {
-        speechSynthesis.resume();
-        const unlockUtterance = new SpeechSynthesisUtterance(" ");
-        unlockUtterance.lang = "ru-RU";
-        unlockUtterance.volume = 0;
-        speechSynthesis.speak(unlockUtterance);
-      } catch (_) {}
-    }
     try {
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Открой страницу через HTTPS в Chrome и разреши камеру.");
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Открой страницу через HTTPS в Chrome и разреши камеру.");
+      }
       setStatus("Запуск камеры…");
-      stream = await navigator.mediaDevices.getUserMedia({
+      const cameraPromise = navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
           facingMode: { ideal: "environment" },
@@ -841,16 +1086,16 @@ import {
         }
       });
 
+      // Start camera & OCR worker initialization concurrently for instant boot!
+      const [mediaStream] = await Promise.all([cameraPromise, ensureOcrWorker()]);
+      stream = mediaStream;
+
       const [videoTrack] = stream.getVideoTracks();
       if (videoTrack?.getCapabilities && videoTrack?.applyConstraints) {
         try {
           const caps = videoTrack.getCapabilities();
-          const advanced = {};
           if (Array.isArray(caps.focusMode) && caps.focusMode.includes("continuous")) {
-            advanced.focusMode = "continuous";
-          }
-          if (Object.keys(advanced).length) {
-            await videoTrack.applyConstraints({ advanced: [advanced] });
+            await videoTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
           }
         } catch (_) {}
       }
@@ -864,23 +1109,21 @@ import {
       $("placeholder").hidden = true;
       $("startCamera").disabled = true;
       $("stopCamera").disabled = false;
-      $("speechState").textContent = speechEnabled ? "Озвучка готова" : "Остановлена";
-      setStatus("Загрузка OCR…");
-      $("ocrState").textContent = "Загрузка русского OCR…";
+      $("speechState").textContent = speechEnabled ? "Готова" : "Остановлена";
 
       invalidateFrameGate();
       lastHadSubtitle = false;
       captionController.reset();
+      captionController.setCastMode($("castMode").value);
       updateDiagnostics();
-      worker = await createOcrWorker();
+
       scanning = true;
       document.body.classList.add("running");
-      setStatus("Камера работает");
+      setStatus("Сканирует");
       scanLoop();
     } catch (error) {
       console.error(error);
-      stopAudioKeepAlive();
-      setStatus("Не удалось запустить");
+      setStatus("Ошибка запуска");
       $("lastText").textContent = "Ошибка: " + (error.message || String(error));
       if (stream) stream.getTracks().forEach(track => track.stop());
       stream = null;
@@ -893,16 +1136,10 @@ import {
 
   $("stopCamera").addEventListener("click", async () => {
     scanning = false;
-    stopAudioKeepAlive();
     if (stream) stream.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
     $("videoWrap").classList.remove("camera-active");
-    if (worker) {
-      const oldWorker = worker;
-      worker = null;
-      try { await oldWorker.dispose(); } catch (_) {}
-    }
     while (loopRunning) await wait(20);
     cancelSpeechAndQueue();
     captionController.reset();
@@ -914,7 +1151,7 @@ import {
     $("ocrState").textContent = "Остановлено";
     $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
     document.body.classList.remove("running");
-    setStatus("Остановлено");
+    setStatus("Готов");
   });
 
   $("toggleRecognition").addEventListener("click", () => {
@@ -924,112 +1161,146 @@ import {
     updateDiagnostics();
     updateRecognitionButton();
     $("ocrState").textContent = recognitionEnabled
-      ? (scanning ? "Распознавание включено" : "Ожидание")
-      : "Распознавание остановлено";
-    if (recognitionEnabled && scanning) {
-      $("lastText").textContent = "Жду новые субтитры…";
-    }
+      ? (scanning ? "Активно" : "Ожидание")
+      : "Пауза OCR";
   });
 
   $("toggleSpeech").addEventListener("click", () => {
-    audioUnlocked = true;
+    voiceEngine.unlockAudio();
     speechEnabled = !speechEnabled;
     updateSpeechButton();
     if (!speechEnabled) {
       cancelSpeechAndQueue();
       $("speechState").textContent = "Остановлена";
     } else {
-      startAudioKeepAlive();
-      $("speechState").textContent = "Включена";
-      if ("speechSynthesis" in window) {
-        try { speechSynthesis.resume(); } catch (_) {}
-      }
+      $("speechState").textContent = "Готова";
       pumpSpeechQueue();
     }
   });
 
-  function speakStandalone(text) {
-    if (!("speechSynthesis" in window) || !text) return;
-    audioUnlocked = true;
-    startAudioKeepAlive();
+  function speakStandalone(text, role = ROLES.JASON) {
+    if (!text) return;
+    voiceEngine.unlockAudio();
     cancelSpeechAndQueue();
     activeSpeech = true;
     activeSpeechStartedAt = Date.now();
-    let done = false;
-    const spokenString = formatForFastSpeech(text) || text;
-    const utterance = new SpeechSynthesisUtterance(spokenString);
-    utterance.lang = "ru-RU";
-    utterance.rate = Number($("rate").value);
-    utterance.pitch = 1.02;
-    utterance.volume = Number($("volume").value);
-    const voice = voiceFor("");
-    if (voice) utterance.voice = voice;
+    renderRoleBadge(role, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
 
-    const finish = () => {
-      if (done) return;
-      done = true;
-      if (speechWatchdog) window.clearTimeout(speechWatchdog);
-      speechWatchdog = null;
-      activeSpeech = false;
-      activeSpeechStartedAt = 0;
-      $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
-      updateDiagnostics();
-      pumpSpeechQueue();
-    };
-    const armWatchdog = () => {
-      if (speechWatchdog) window.clearTimeout(speechWatchdog);
-      speechWatchdog = window.setTimeout(() => {
-        try { speechSynthesis.cancel(); } catch (_) {}
-        finish();
-      }, 9000);
+    const turns = buildDialogueTurns(
+      text.split(/\r?\n/).map(line => {
+        const ex = extractSpeakerTag(line);
+        return { text: ex.text || line, speaker: ex.speaker };
+      }).filter(l => cleanText(l.text)),
+      { previousRole: "", castMode: $("castMode").value }
+    );
+
+    const item = {
+      speechText: text,
+      role,
+      turns: turns.length > 1 ? turns : [{ text, role }]
     };
 
-    utterance.onstart = () => {
-      activeSpeechStartedAt = Date.now();
-      $("speechState").textContent = "Говорит (" + utterance.rate.toFixed(2) + "×)";
-      armWatchdog();
-    };
-    utterance.onboundary = armWatchdog;
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    try {
-      if (speechSynthesis.paused) speechSynthesis.resume();
-      speechSynthesis.speak(utterance);
-      armWatchdog();
-    } catch (error) {
-      console.error(error);
-      $("speechState").textContent = "Ошибка TTS";
-      finish();
-    }
+    voiceEngine.speakItem(item, { catchUpBoost: 0 })
+      .catch(err => {
+        console.warn("Standalone speech error:", err);
+        $("speechState").textContent = "Ошибка озвучки";
+      })
+      .finally(() => {
+        activeSpeech = false;
+        activeSpeechStartedAt = 0;
+        $("speechState").textContent = speechEnabled ? "Готова" : "Остановлена";
+        updateDiagnostics();
+        pumpSpeechQueue();
+      });
   }
 
   $("testSpeech").addEventListener("click", () => {
-    refreshVoices();
-    speakStandalone("Проверка быстрого голоса. Теперь говорю живо, без лишних пауз!");
+    populateOfflineVoiceSelects();
+    speakStandalone(
+      "- Джейсон, уходим скорее!\n- Я понял, прыгай в машину!",
+      ROLES.LUCIA
+    );
   });
 
   $("speakManual").addEventListener("click", () => {
-    speakStandalone(cleanText($("manualText").value));
+    speakStandalone(cleanText($("manualText").value), ROLES.JASON);
   });
 
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && scanning && "speechSynthesis" in window) {
-      if (keepAliveAudioCtx?.state === "suspended") {
-        keepAliveAudioCtx.resume().catch(() => {});
+  // PWA Service Worker + Offline Model Pre-Caching
+  async function refreshOfflineCacheStatus() {
+    const badge = $("offlineBadge");
+    if (!("caches" in window)) {
+      badge.textContent = "Без кэша";
+      return;
+    }
+    try {
+      const keys = await caches.keys();
+      let hasModel = false;
+      for (const key of keys) {
+        const cache = await caches.open(key);
+        const reqs = await cache.keys();
+        if (reqs.some(r => /\.(tar|onnx|wasm)(\?|$)/i.test(r.url))) {
+          hasModel = true;
+          break;
+        }
       }
-      try { if (speechSynthesis.paused) speechSynthesis.resume(); } catch (_) {}
-      pumpSpeechQueue();
+      if (hasModel) {
+        badge.textContent = navigator.onLine === false ? "Офлайн-режим ✓" : "Офлайн готов ✓";
+        badge.classList.add("ready");
+        $("prepareOfflineBtn").textContent = "Офлайн-пакет сохранён ✓";
+      } else {
+        badge.textContent = navigator.onLine === false ? "Нет сети" : "Онлайн";
+        badge.classList.remove("ready");
+      }
+    } catch (_) {}
+  }
+
+  $("prepareOfflineBtn").addEventListener("click", async () => {
+    const btn = $("prepareOfflineBtn");
+    btn.disabled = true;
+    btn.textContent = "Скачиваю OCR-модели в память…";
+    try {
+      await ensureOcrWorker();
+      await refreshOfflineCacheStatus();
+      btn.textContent = "Офлайн-пакет готов к работе без сети ✓";
+    } catch (err) {
+      btn.textContent = "Ошибка загрузки: " + (err.message || "проверь интернет");
+      btn.disabled = false;
     }
   });
 
-  $("rate").addEventListener("input", event => {
-    const val = Number(event.target.value);
-    $("rateValue").textContent = val.toFixed(2) + "×";
-    syncVoicePacePreset(val);
-    savePrefs();
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js?v=0.55").then(() => {
+        refreshOfflineCacheStatus();
+      }).catch(err => {
+        console.warn("SW registration skipped:", err);
+      });
+    });
+  }
+
+  window.addEventListener("online", refreshOfflineCacheStatus);
+  window.addEventListener("offline", refreshOfflineCacheStatus);
+  refreshOfflineCacheStatus();
+
+  window.addEventListener("beforeinstallprompt", event => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    $("installAppBtn").hidden = false;
   });
-  $("volume").addEventListener("input", event => {
-    $("volumeValue").textContent = Math.round(Number(event.target.value) * 100) + "%";
-    savePrefs();
+
+  $("installAppBtn").addEventListener("click", async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    try { await deferredInstallPrompt.userChoice; } catch (_) {}
+    deferredInstallPrompt = null;
+    $("installAppBtn").hidden = true;
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && scanning) {
+      voiceEngine.resumeIfSuspended();
+      pumpSpeechQueue();
+    }
   });
 })();

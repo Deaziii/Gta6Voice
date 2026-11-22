@@ -3,20 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#101319">
-  <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
-  <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.54">
+  <meta name="theme-color" content="#0b0e14">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Молниеносная офлайн и ИИ-озвучка русских субтитров с распределением ролей">
+  <title>GTA6 Voice · AI &amp; Offline Dubbing</title>
+  <link rel="manifest" href="./manifest.webmanifest?v=0.55">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b0e14'/%3E%3Crect x='3' y='3' width='58' height='58' rx='13' fill='none' stroke='%23c6ff5e' stroke-width='3'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='34' fill='%23c6ff5e'%3EG6%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css?v=0.55">
 </head>
 <body>
   <main class="app">
     <header class="top">
-      <div class="brand"><span class="mark">G</span><div><h1>GTA6 Voice</h1><p>Слышь субтитры, а не читай их</p></div></div>
-      <span id="status" class="status">Готов</span>
+      <div class="brand">
+        <span class="mark">G6</span>
+        <div>
+          <div class="title-row">
+            <h1>GTA6 Voice</h1>
+            <span class="ver-tag">v0.55</span>
+          </div>
+          <p>Живая многоголосая озвучка субтитров · Offline &amp; AI</p>
+        </div>
+      </div>
+      <div class="top-pills">
+        <button id="installAppBtn" class="install-btn" type="button" hidden>Установить</button>
+        <span id="offlineBadge" class="offline-pill">Онлайн</span>
+        <span id="status" class="status">Готов</span>
+      </div>
     </header>
 
     <section class="panel camera-panel">
-      <div class="section-head"><div><h2>Камера</h2><p>Направь заднюю камеру на экран с субтитрами</p></div><span class="live-dot" id="liveDot"></span></div>
+      <div class="section-head">
+        <div>
+          <h2>Экран захвата</h2>
+          <p>Наведи зелёную рамку строго на строки субтитров</p>
+        </div>
+        <span class="live-dot" id="liveDot"></span>
+      </div>
 
       <div class="video-wrap" id="videoWrap">
         <video id="camera" autoplay muted playsinline></video>
@@ -30,29 +54,34 @@
           <i class="roi-handle sw" data-handle="sw" aria-hidden="true"></i>
           <i class="roi-handle w" data-handle="w" aria-hidden="true"></i>
         </div>
-        <div id="placeholder" class="placeholder"><div class="camera-icon">◎</div><b>Камера выключена</b><small>Нажми «Включить камеру»</small></div>
+        <div id="placeholder" class="placeholder">
+          <div class="camera-icon">◎</div>
+          <b>Камера ожидает запуска</b>
+          <small>Работает офлайн после первого сохранения моделей</small>
+        </div>
       </div>
 
       <div class="quick-controls" aria-label="Быстрое управление">
-        <button id="startCamera" class="primary">Включить камеру</button>
-        <button id="stopCamera" disabled>Остановить камеру</button>
+        <button id="startCamera" class="primary" type="button">Включить камеру</button>
+        <button id="stopCamera" type="button" disabled>Остановить</button>
         <button id="toggleSpeech" class="speech-toggle" type="button" aria-pressed="true">Озвучка: ВКЛ</button>
         <button id="toggleRecognition" class="recognition-toggle" type="button" aria-pressed="true">Распознавание: ВКЛ</button>
         <button id="slimRoi" class="secondary" type="button">Узкая полоса (2 стр.)</button>
-        <button id="testSpeech" class="secondary" type="button">Тест голоса</button>
+        <button id="testSpeech" class="secondary" type="button">Тест диалога (М+Ж)</button>
       </div>
 
       <div class="mode-grid">
         <div class="speed-bar">
-          <label for="ocrSpeed">OCR:</label>
+          <label for="ocrSpeed">Скан:</label>
           <select id="ocrSpeed">
-            <option value="ultra" selected>Ультра · авто-кроп (480px)</option>
-            <option value="turbo">Турбо · стандарт (576px)</option>
-            <option value="balanced">Чётко · мелкий шрифт (704px)</option>
+            <option value="lightning">Молния · 416px (макс. скорость)</option>
+            <option value="ultra" selected>Ультра · 480px (быстро + чётко)</option>
+            <option value="turbo">Турбо · 576px (стандарт)</option>
+            <option value="balanced">Чётко · 704px (мелкий шрифт)</option>
           </select>
         </div>
         <div class="speed-bar">
-          <label for="voicePace">Темп речи:</label>
+          <label for="voicePace">Темп:</label>
           <select id="voicePace">
             <option value="1.25">Живой (1.25×)</option>
             <option value="1.45" selected>Быстрый (1.45×)</option>
@@ -63,74 +92,204 @@
         </div>
       </div>
 
-      <p class="speech-status">Состояние голоса: <span id="speechState" class="muted">Включена</span></p>
-
       <div class="ocr-inline">
-        <div class="section-head"><h2>Распознанный текст</h2><span class="pill" id="ocrState">Ожидание</span></div>
-        <div id="lastText" class="last-text">Здесь появится реплика из игры…</div>
+        <div class="stage-meta">
+          <div class="stage-badges">
+            <span id="activeRoleBadge" class="role-badge role-idle">Персонаж: авто</span>
+            <span id="activeEngineChip" class="engine-chip chip-offline">ОФЛАЙН</span>
+          </div>
+          <span class="pill" id="ocrState">Ожидание</span>
+        </div>
+
+        <div id="lastText" class="last-text">Здесь мгновенно появится реплика из игры…</div>
+
         <div class="stats ocr-queue-stats">
+          <span>Голос: <b id="speechState">Включена</b></span>
           <span>Очередь: <b id="queueState">0</b></span>
-          <span>Старт TTS: <b id="ttsLag">—</b></span>
+          <span>Старт: <b id="ttsLag">—</b></span>
           <span>Речь: <b id="speechDuration">—</b></span>
-          <span>Пропущено: <b id="droppedCount">0</b></span>
+          <span>Пропуск: <b id="droppedCount">0</b></span>
           <span>OCR: <b id="latency">—</b></span>
         </div>
+
         <details id="debugOcr" class="debug-ocr">
-          <summary>Что реально увидел OCR</summary>
+          <summary>Инспектор OCR и ролей</summary>
           <pre id="rawText">Пока нет данных</pre>
         </details>
       </div>
+    </section>
+
+    <section class="panel studio-panel">
+      <div class="section-head">
+        <div>
+          <h2>Студия озвучки и ролей</h2>
+          <p>Авто-определение мужских, женских, главных и второстепенных ролей</p>
+        </div>
+      </div>
+
+      <div class="engine-tabs" role="tablist" aria-label="Выбор движка озвучки">
+        <button id="modeOfflineBtn" class="engine-tab active" role="tab" aria-selected="true" type="button">
+          <b>⚡ Офлайн-голоса</b>
+          <small>0 мс сеть · Без интернета</small>
+        </button>
+        <button id="modeAiBtn" class="engine-tab" role="tab" aria-selected="false" type="button">
+          <b>✨ ИИ-озвучка PRO</b>
+          <small>ElevenLabs Flash · Живые актёры</small>
+        </button>
+      </div>
+
+      <div class="cast-bar">
+        <label for="castMode">Распределение ролей:</label>
+        <select id="castMode">
+          <option value="gta_duo" selected>GTA 6 · Джейсон + Люсия + второстепенные NPC</option>
+          <option value="cinema_quad">Кино / Сериал · чередование всех 4 голосов</option>
+        </select>
+      </div>
+
+      <!-- OFFLINE VOICE PANEL -->
+      <div id="offlineVoicePanel" class="engine-body">
+        <div class="offline-pack-bar">
+          <span id="offlineVoiceSummary">Проверка русских голосов Android…</span>
+          <button id="prepareOfflineBtn" class="secondary compact-btn" type="button">Скачать офлайн-пакет OCR</button>
+        </div>
+
+        <div class="role-cards">
+          <div class="role-card card-jason">
+            <div class="role-card-head">
+              <span class="role-dot dot-jason"></span>
+              <b>Джейсон · Главный (М)</b>
+              <button class="preview-btn" type="button" data-preview-role="jason" title="Прослушать">▶</button>
+            </div>
+            <select id="offlineJasonVoice"></select>
+          </div>
+
+          <div class="role-card card-lucia">
+            <div class="role-card-head">
+              <span class="role-dot dot-lucia"></span>
+              <b>Люсия · Главная (Ж)</b>
+              <button class="preview-btn" type="button" data-preview-role="lucia" title="Прослушать">▶</button>
+            </div>
+            <select id="offlineLuciaVoice"></select>
+          </div>
+
+          <div class="role-card card-mnpc">
+            <div class="role-card-head">
+              <span class="role-dot dot-mnpc"></span>
+              <b>Второстепенный (М)</b>
+              <button class="preview-btn" type="button" data-preview-role="male_npc" title="Прослушать">▶</button>
+            </div>
+            <select id="offlineMaleNpcVoice"></select>
+          </div>
+
+          <div class="role-card card-fnpc">
+            <div class="role-card-head">
+              <span class="role-dot dot-fnpc"></span>
+              <b>Второстепенная (Ж)</b>
+              <button class="preview-btn" type="button" data-preview-role="female_npc" title="Прослушать">▶</button>
+            </div>
+            <select id="offlineFemaleNpcVoice"></select>
+          </div>
+        </div>
+
+        <details class="debug-ocr tip-box">
+          <summary>Как сделать офлайн-голоса максимально живыми на Android</summary>
+          <p class="hint">
+            Даже если на телефоне установлен всего один русский голос, приложение само разводит всех 4 героев по тембру и подаче. Для нейросетевого офлайн-звучания установи на Android бесплатный движок <b>Sherpa-ONNX TTS</b> (русские модели Piper <i>dmitri, denis, irina, ruslan</i>) или скачай офлайн-пакет <b>Речь от Google (русский)</b> в настройках системы — они сразу появятся в списках выше.
+          </p>
+        </details>
+      </div>
+
+      <!-- PAID AI ELEVENLABS PANEL -->
+      <div id="aiVoicePanel" class="engine-body" hidden>
+        <div class="api-box">
+          <label for="elevenApiKey">API-ключ ElevenLabs (хранится только локально в твоём телефоне)</label>
+          <div class="api-row">
+            <input id="elevenApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Вставь xi-api-key от ElevenLabs…">
+            <button id="toggleKeyVis" class="secondary compact-btn" type="button">Показать</button>
+          </div>
+          <div class="api-subrow">
+            <select id="aiModel">
+              <option value="eleven_flash_v2_5" selected>Eleven Flash v2.5 · ~75 мс (самый быстрый + экономный)</option>
+              <option value="eleven_v4_turbo">Eleven v4 Turbo · ~100 мс (максимум эмоций)</option>
+              <option value="eleven_multilingual_v2">Multilingual v2 · студийный дубляж</option>
+            </select>
+            <button id="loadAiVoices" class="secondary compact-btn" type="button">Мои голоса</button>
+          </div>
+          <p id="aiStatusText" class="hint">Предзагрузка следующей реплики в фоне + кэш повторов для экономии символов.</p>
+          <label class="check compact-check">
+            <input id="aiFallback" type="checkbox" checked>
+            <span>Мгновенный подхват офлайн-голосом при задержке сети (&gt; 1.3 с)</span>
+          </label>
+        </div>
+
+        <div class="role-cards">
+          <div class="role-card card-jason">
+            <div class="role-card-head">
+              <span class="role-dot dot-jason"></span>
+              <b>Джейсон · Главный (М)</b>
+              <button class="preview-btn" type="button" data-preview-role="jason" title="Прослушать ИИ">▶</button>
+            </div>
+            <select id="aiJasonVoice"></select>
+          </div>
+
+          <div class="role-card card-lucia">
+            <div class="role-card-head">
+              <span class="role-dot dot-lucia"></span>
+              <b>Люсия · Главная (Ж)</b>
+              <button class="preview-btn" type="button" data-preview-role="lucia" title="Прослушать ИИ">▶</button>
+            </div>
+            <select id="aiLuciaVoice"></select>
+          </div>
+
+          <div class="role-card card-mnpc">
+            <div class="role-card-head">
+              <span class="role-dot dot-mnpc"></span>
+              <b>Второстепенный (М)</b>
+              <button class="preview-btn" type="button" data-preview-role="male_npc" title="Прослушать ИИ">▶</button>
+            </div>
+            <select id="aiMaleNpcVoice"></select>
+          </div>
+
+          <div class="role-card card-fnpc">
+            <div class="role-card-head">
+              <span class="role-dot dot-fnpc"></span>
+              <b>Второстепенная (Ж)</b>
+              <button class="preview-btn" type="button" data-preview-role="female_npc" title="Прослушать ИИ">▶</button>
+            </div>
+            <select id="aiFemaleNpcVoice"></select>
+          </div>
+        </div>
+      </div>
 
       <section class="settings-area">
-        <h2 class="settings-title">Настройки</h2>
-
         <details class="settings-group">
-          <summary><span><b>Камера и зона субтитров</b><small>Положение рамки сохраняется автоматически</small></span><output id="roiLabel">X 8% · Y 43% · 84% × 12%</output></summary>
+          <summary><span><b>Точная настройка рамки камеры</b><small>Позиция запоминается автоматически</small></span><output id="roiLabel">X 8% · Y 43% · 84% × 12%</output></summary>
           <div class="settings-content">
-            <label class="range-label"><span>Положение по горизонтали</span><output id="roiLeftValue">8%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="8"></label>
-            <label class="range-label"><span>Положение по вертикали</span><output id="roiTopValue">43%</output><input id="roiTop" type="range" min="0" max="88" step="1" value="43"></label>
+            <label class="range-label"><span>Горизонталь (X)</span><output id="roiLeftValue">8%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="8"></label>
+            <label class="range-label"><span>Вертикаль (Y)</span><output id="roiTopValue">43%</output><input id="roiTop" type="range" min="0" max="88" step="1" value="43"></label>
             <label class="range-label"><span>Ширина рамки</span><output id="roiWidthValue">84%</output><input id="roiWidth" type="range" min="20" max="100" step="1" value="84"></label>
             <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">12%</output><input id="roiHeight" type="range" min="3" max="70" step="1" value="12"></label>
-            <p class="hint">Держи рамку узкой полосой строго по строкам субтитров: алгоритм дополнительно обрезает пустые края слева и справа вокруг букв.</p>
           </div>
         </details>
 
         <details class="settings-group">
-          <summary><span><b>Распознавание имён</b><small>Имя персонажа перед репликой</small></span></summary>
-          <div class="settings-content">
-            <label class="check"><input id="showNames" type="checkbox" checked><span>Определять имя говорящего (Jason / Lucia / Tourist)</span></label>
-            <p class="hint">Эта настройка ищет имя персонажа перед субтитрами и помогает выбрать для него отдельный голос. Сам текст реплики распознаётся независимо.</p>
-          </div>
-        </details>
-
-        <details class="settings-group">
-          <summary><span><b>Голос и звучание</b><small>Точная настройка скорости и голосов</small></span></summary>
+          <summary><span><b>Скорость, громкость и тест фраз</b><small>Тонкая регулировка подачи речи</small></span></summary>
           <div class="settings-content">
             <label class="range-label"><span>Скорость речи</span><output id="rateValue">1.45×</output><input id="rate" type="range" min="1.00" max="2.20" step="0.05" value="1.45"></label>
-            <label class="range-label"><span>Громкость речи</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
-            <div class="voice-grid">
-              <label>Обычный голос<select id="defaultVoice"><option value="">Быстрый русский голос Android</option></select></label>
-              <label>Jason<select id="jasonVoice"><option value="">Автоматически</option></select></label>
-              <label>Lucia<select id="luciaVoice"><option value="">Автоматически</option></select></label>
-            </div>
-            <p class="hint">При быстрой смене реплик скорость автоматически повышается ещё на +0.12…0.25×, а лишние паузы на тире и точках убираются.</p>
+            <label class="range-label"><span>Громкость</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
+            <label class="check"><input id="showNames" type="checkbox" checked><span>Считывать имена перед двоеточием (Jason / Люсия / Лиза / Коп…)</span></label>
+            <textarea id="manualText" rows="2" placeholder="Введи реплику или диалог с тире для проверки ролей…">Люсия: Я сама поведу!
+Джейсон: Ладно, только жми на газ!</textarea>
+            <button id="speakManual" class="secondary full" type="button">Озвучить проверочный диалог</button>
           </div>
         </details>
-
-        <details class="settings-group">
-          <summary><span><b>Проверка озвучки текстом</b><small>Введи свою фразу и послушай результат</small></span></summary>
-          <div class="settings-content">
-            <textarea id="manualText" rows="2" placeholder="Введи фразу, чтобы проверить русский голос…">Вау! Офигенно! Вот это скорость!</textarea>
-            <button id="speakManual" class="secondary full">Произнести текст</button>
-          </div>
-        </details>
-
       </section>
-      <p class="hint">Выключи энергосбережение на телефоне во время просмотра — при низком заряде Android режет частоту процессора в 2 раза и замедляет OCR.</p>
     </section>
-    <footer>GTA6 Voice · прототип 0.54 · распознавание может ошибаться на бликах и движении</footer>
+
+    <footer>GTA6 Voice · v0.55 Offline PWA &amp; Neural AI Cast · открывай в Chrome без энергосбережения</footer>
   </main>
+  <audio id="aiAudio" hidden preload="auto"></audio>
   <canvas id="frame" hidden></canvas>
-  <script type="module" src="./app.js?v=0.54"></script>
+  <script type="module" src="./app.js?v=0.55"></script>
 </body>
 </html>

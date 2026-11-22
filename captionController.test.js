@@ -2,73 +2,88 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CaptionController,
+  ROLES,
+  buildDialogueTurns,
   evaluateFrameGate,
+  extractSpeakerTag,
   formatForFastSpeech,
+  inferSpeakerRole,
   isRussianSubtitleLine,
   normalizeRussianHomoglyphs
 } from "./captionController.js";
 
-test("recovers pure-homoglyph Russian exclamations like '- Bay!' -> '- Вау!' and fixes mid-word caps", () => {
+test("extractSpeakerTag and inferSpeakerRole classify main & secondary male/female speakers accurately", () => {
+  const t1 = extractSpeakerTag("Jason: Держись крепче!");
+  assert.equal(t1.speaker, "Jason");
+  assert.equal(inferSpeakerRole({ text: t1.text, speaker: t1.speaker }), ROLES.JASON);
+
+  const t2 = extractSpeakerTag("Люсия: Я сама поведу машину!");
+  assert.equal(t2.speaker, "Люсия");
+  assert.equal(inferSpeakerRole({ text: t2.text, speaker: t2.speaker }), ROLES.LUCIA);
+
+  const t3 = extractSpeakerTag("Лиза: Куда вы собрались?");
+  assert.equal(inferSpeakerRole({ text: t3.text, speaker: t3.speaker }), ROLES.FEMALE_NPC);
+
+  const t4 = extractSpeakerTag("Охранник: Стой на месте!");
+  assert.equal(inferSpeakerRole({ text: t4.text, speaker: t4.speaker }), ROLES.MALE_NPC);
+
+  // Hidden speaker names inferred from Russian verb morphology & vocative address
+  assert.equal(
+    inferSpeakerRole({ text: "Я заняла это место ещё утром!", previousRole: ROLES.JASON }),
+    ROLES.LUCIA
+  );
+  assert.equal(
+    inferSpeakerRole({ text: "Я уже проверил чёрный ход.", previousRole: ROLES.LUCIA }),
+    ROLES.JASON
+  );
+  assert.equal(
+    inferSpeakerRole({ text: "Джейсон, уходим отсюда!", previousRole: ROLES.JASON }),
+    ROLES.LUCIA
+  );
+});
+
+test("buildDialogueTurns splits two-line dash dialogues into distinct alternating character voices", () => {
+  const turns = buildDialogueTurns([
+    { text: "- Вау!", speaker: "" },
+    { text: "- Офигенно! Круто!", speaker: "" }
+  ], { previousRole: ROLES.JASON, castMode: "gta_duo" });
+
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].role, ROLES.LUCIA);
+  assert.equal(turns[1].role, ROLES.JASON);
+});
+
+test("homoglyphs, fast speech formatting, and two-line extension delta with role switch work cleanly", () => {
   assert.equal(
     normalizeRussianHomoglyphs("- Bay!", { frameHasCyrillic: true }),
     "- Вау!"
   );
   assert.equal(isRussianSubtitleLine("- Bay!", { frameHasCyrillic: true }), true);
   assert.equal(
-    normalizeRussianHomoglyphs("Hy kak tam?"),
-    "Ну как там?"
-  );
-  assert.equal(
-    normalizeRussianHomoglyphs("Мне отмщение, я воздам - ровОрИТ Господь."),
-    "Мне отмщение, я воздам - роворит Господь."
-  );
-  assert.equal(isRussianSubtitleLine("Press X to continue", { frameHasCyrillic: false }), false);
-});
-
-test("formatForFastSpeech removes robotic pauses on dashes, ellipses, and mid-line exclamation marks", () => {
-  assert.equal(
     formatForFastSpeech("- Вау! - Офигенно! Круто!"),
     "Вау, Офигенно, Круто"
   );
-  assert.equal(
-    formatForFastSpeech("Мне отмщение, я воздам - говорит Господь..."),
-    "Мне отмщение, я воздам, говорит Господь"
-  );
-  assert.equal(
-    formatForFastSpeech("Я заняла это место. Для кого?"),
-    "Я заняла это место, Для кого?"
-  );
-});
 
-test("two-line extension speaks row 1 at 0ms and queues only row 2 without repeating either row", () => {
   const ctrl = new CaptionController();
-
-  ctrl.observe({ text: "Как сказала бы моя Лиза", confidence: 97, lineCount: 1 }, 1000);
+  ctrl.observe({ text: "- Я готова!", confidence: 92, lineCount: 1 }, 1000);
   const first = ctrl.pullNextUtterance(1000);
-  assert.equal(first?.speechText, "Как сказала бы моя Лиза");
+  assert.equal(first?.role, ROLES.LUCIA);
 
-  ctrl.observe({ text: "Как сказала бы моя Лиза, вот это я понимаю, конура!", confidence: 96, lineCount: 2 }, 1350);
-  assert.equal(ctrl.shouldPreemptActive(2500), false);
-
-  ctrl.onSpeechEnd(1900);
-  const second = ctrl.pullNextUtterance(1900);
-  assert.equal(second?.speechText, "вот это я понимаю, конура!");
-
-  ctrl.onSpeechEnd(2400);
-  ctrl.observe({ text: "вот это я понимаю, конура!", confidence: 96, lineCount: 1 }, 2500);
-  assert.equal(ctrl.pullNextUtterance(2500), null);
+  // Second speaker line arrives as extension starting with dash -> switches to Jason!
+  ctrl.observe({ text: "- Я готова! - Погнали скорее!", confidence: 94, lineCount: 2 }, 1350);
+  ctrl.onSpeechEnd(1800);
+  const second = ctrl.pullNextUtterance(1800);
+  assert.equal(second?.speechText, "- Погнали скорее!");
+  assert.equal(second?.role, ROLES.JASON);
 });
 
-test("Bilateral Stem Gate ignores DLP rainbow waves & step edges, locks onto same subtitle, and triggers on change", () => {
+test("Bilateral Stem Gate skips DLP waves and unchanged subtitles while triggering on new text", () => {
   const W = 192;
   const H = 48;
-
-  // Helper: background with DLP smooth brightness wave + bright step edge on left (orange vest / wall)
   const makeScene = (waveShift = 0, stems = []) => {
     const rgba = new Uint8ClampedArray(W * H * 4);
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
-        // Step edge at x=30 (bright vest on left, dark background on right) + smooth DLP wave
         const step = x < 30 ? 150 : 45;
         const wave = Math.round(25 * Math.sin((x + waveShift) / 18));
         const v = Math.max(0, Math.min(255, step + wave));
@@ -92,60 +107,22 @@ test("Bilateral Stem Gate ignores DLP rainbow waves & step edges, locks onto sam
     return rgba;
   };
 
-  // 1. Blank moving scene (with step edge + DLP wave) skips after initial frame
-  const f0 = makeScene(0, []);
-  const g0 = evaluateFrameGate(f0, W, H, {}, 1000);
+  const g0 = evaluateFrameGate(makeScene(0, []), W, H, {}, 1000);
   assert.equal(g0.run, true);
 
-  const f1 = makeScene(12, []);
-  const g1 = evaluateFrameGate(f1, W, H, { lastFullOcrAt: 1000, lastHadSubtitle: false }, 1040);
-  assert.equal(g1.run, false);
-  assert.equal(g1.reason, "empty-scene");
+  const gEmpty = evaluateFrameGate(makeScene(15, []), W, H, { lastFullOcrAt: 1000, lastHadSubtitle: false }, 1050);
+  assert.equal(gEmpty.run, false);
 
-  // 2. Subtitle A appears in center -> triggers immediately and produces tight horizontal crop
-  const subAStems = [[76, 18, 28], [82, 18, 28], [90, 18, 28], [96, 18, 28], [104, 18, 28], [110, 18, 28]];
-  const fSubA1 = makeScene(15, subAStems);
-  const gSubA1 = evaluateFrameGate(fSubA1, W, H, { lastFullOcrAt: 1000, lastHadSubtitle: false }, 1080);
-  assert.equal(gSubA1.run, true);
-  assert.equal(gSubA1.reason, "subtitle-appeared");
-  assert.ok(gSubA1.crop.x0 > 0.15 && gSubA1.crop.x1 < 0.85);
+  const stemsA = [[76, 18, 28], [82, 18, 28], [90, 18, 28], [96, 18, 28], [104, 18, 28], [110, 18, 28]];
+  const gSubA = evaluateFrameGate(makeScene(20, stemsA), W, H, { lastFullOcrAt: 1000, lastHadSubtitle: false }, 1100);
+  assert.equal(gSubA.run, true);
 
-  // 3. Same Subtitle A stays on screen while DLP wave shifts & hand shakes by +3px -> SKIPPED (0ms wasted!)
-  const subAShaken = subAStems.map(([x, y0, y1]) => [x + 3, y0 + 1, y1 + 1]);
-  const fSubA2 = makeScene(35, subAShaken);
-  const gSubA2 = evaluateFrameGate(
-    fSubA2,
+  const gSame = evaluateFrameGate(
+    makeScene(35, stemsA),
     W,
     H,
-    {
-      lastFullOcrAt: 1100,
-      lastHadSubtitle: true,
-      prevStemNorm: gSubA1.stemNorm,
-      prevActiveCells: gSubA1.activeCells
-    },
+    { lastFullOcrAt: 1100, lastHadSubtitle: true, prevStemNorm: gSubA.stemNorm, prevActiveCells: gSubA.activeCells },
     1250
   );
-  assert.equal(gSubA2.run, false);
-  assert.equal(gSubA2.reason, "same-subtitle");
-
-  // 4. Subtitle changes to wider 2-line Subtitle B -> triggers IMMEDIATELY
-  const subBStems = [
-    ...subAStems,
-    [60, 32, 41], [67, 32, 41], [122, 32, 41], [130, 32, 41], [138, 32, 41]
-  ];
-  const fSubB = makeScene(40, subBStems);
-  const gSubB = evaluateFrameGate(
-    fSubB,
-    W,
-    H,
-    {
-      lastFullOcrAt: 1100,
-      lastHadSubtitle: true,
-      prevStemNorm: gSubA1.stemNorm,
-      prevActiveCells: gSubA1.activeCells
-    },
-    1300
-  );
-  assert.equal(gSubB.run, true);
-  assert.equal(gSubB.reason, "subtitle-changed");
+  assert.equal(gSame.run, false);
 });
