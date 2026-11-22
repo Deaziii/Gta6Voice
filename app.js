@@ -574,10 +574,14 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   async function createOcrWorker() {
     $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Первый запуск: загружаю русскую модель распознавания. Это может занять время.";
+    $("lastText").textContent = "Первый запуск: загружаю русскую модель East Slavic (русский). Это может занять время.";
+    const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
     const engine = await PaddleOCR.create({
-      lang: "ru",
-      ocrVersion: "PP-OCRv5",
+      textDetectionModelName: "PP-OCRv5_mobile_det",
+      textRecognitionModelName: "eslav_PP-OCRv5_mobile_rec",
+      textRecognitionModelAsset: {
+        url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
+      },
       worker: true,
       ortOptions: {
         backend: "wasm",
