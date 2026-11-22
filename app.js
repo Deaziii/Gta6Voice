@@ -396,7 +396,7 @@
 
         // If normal polarity is weak, retry with inverted grayscale:
         // white subtitles become dark letters and the dark subtitle backing becomes light.
-        if (!parsed.subtitle || parsed.subtitle.confidence < 45) {
+        if (!parsed.subtitle) {
           const invertedImage = prepareRecognitionImage(true);
           if (invertedImage) {
             const invertedResult = await worker.recognize(invertedImage);
@@ -455,6 +455,8 @@
 
           if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
+            // Latest subtitle wins: never let old dialogue accumulate behind newer lines.
+            queue.length = 0;
             queue.push(subtitle);
             setQueueCount();
             pumpSpeechQueue();
