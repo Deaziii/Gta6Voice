@@ -17,6 +17,7 @@
   let previousCandidate = "";
   let candidateCount = 0;
   let lastEnqueuedKey = "";
+  let recentQueuedCaptions = [];
   let lastEmptyStartedAt = 0;
   let emptyCaptionReads = 0;
   let lastScanAt = 0;
@@ -320,16 +321,28 @@
   function similarCaption(a, b) {
     if (!a || !b) return false;
     if (a === b) return true;
-    const aa = a.split(" ").filter(Boolean);
-    const bb = b.split(" ").filter(Boolean);
-    const shorter = aa.length <= bb.length ? aa : bb;
-    const longer = aa.length <= bb.length ? bb : aa;
-    if (longer.length - shorter.length > 2) return false;
-    const common = shorter.filter(word => longer.includes(word)).length;
-    return common / Math.max(1, longer.length) >= 0.82;
+    const left = a.replace(/\\s+/g, " ").trim();
+    const right = b.replace(/\\s+/g, " ").trim();
+    const maxLength = Math.max(left.length, right.length);
+    if (!maxLength || Math.abs(left.length - right.length) / maxLength > 0.22) return false;
+
+    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= left.length; i++) {
+      const current = [i];
+      for (let j = 1; j <= right.length; j++) {
+        const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+        current[j] = Math.min(
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + cost
+        );
+      }
+      previous = current;
+    }
+    return 1 - previous[right.length] / maxLength >= 0.84;
   }
 
-  function prepareRecognitionImage(invertForOcr = false) {
+  function prepareRecognitionImage() {
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (!width || !height) return null;
@@ -350,59 +363,13 @@
     );
     if (cropHeight < 10 || cropWidth < 10) return null;
 
-    // Enlarge the subtitle crop, convert it to grayscale, then isolate bright glyphs.
     const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 2);
-    processed.height = Math.round(cropHeight * 2);
+    processed.width = Math.round(cropWidth * 1.8);
+    processed.height = Math.round(cropHeight * 1.8);
     const pctx = processed.getContext("2d", { willReadFrequently: true });
-    pctx.filter = "grayscale(1)";
+    pctx.filter = "grayscale(1) contrast(1.35)";
     pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
     pctx.filter = "none";
-
-    const frame = pctx.getImageData(0, 0, processed.width, processed.height);
-    const pixels = frame.data;
-    const histogram = new Uint32Array(256);
-    for (let i = 0; i < pixels.length; i += 4) {
-      const gray = Math.round((pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114));
-      histogram[gray]++;
-    }
-
-    // Otsu threshold: separate bright subtitle letters from darker picture/shadow.
-    const total = pixels.length / 4;
-    let sum = 0;
-    for (let level = 0; level < 256; level++) sum += level * histogram[level];
-    let sumBackground = 0;
-    let weightBackground = 0;
-    let bestVariance = -1;
-    let threshold = 175;
-    for (let level = 0; level < 256; level++) {
-      weightBackground += histogram[level];
-      if (!weightBackground) continue;
-      const weightForeground = total - weightBackground;
-      if (!weightForeground) break;
-      sumBackground += level * histogram[level];
-      const meanBackground = sumBackground / weightBackground;
-      const meanForeground = (sum - sumBackground) / weightForeground;
-      const variance = weightBackground * weightForeground *
-        (meanBackground - meanForeground) * (meanBackground - meanForeground);
-      if (variance > bestVariance) {
-        bestVariance = variance;
-        threshold = level;
-      }
-    }
-    // Avoid a very low threshold that would turn the bright game scene into white noise.
-    threshold = Math.max(145, Math.min(220, threshold + 12));
-
-    for (let i = 0; i < pixels.length; i += 4) {
-      const gray = Math.round((pixels[i] * 0.299) + (pixels[i + 1] * 0.587) + (pixels[i + 2] * 0.114));
-      const isGlyph = gray >= threshold;
-      const value = invertForOcr ? (isGlyph ? 0 : 255) : (isGlyph ? 255 : 0);
-      pixels[i] = value;
-      pixels[i + 1] = value;
-      pixels[i + 2] = value;
-      pixels[i + 3] = 255;
-    }
-    pctx.putImageData(frame, 0, 0);
     return processed;
   }
 
@@ -432,23 +399,8 @@
           continue;
         }
 
-        let result = await worker.recognize(image);
-        let parsed = parseSubtitle(result.data);
-
-        // If normal polarity is weak, retry with inverted grayscale:
-        // white subtitles become dark letters and the dark subtitle backing becomes light.
-        if (!parsed.subtitle) {
-          const invertedImage = prepareRecognitionImage(true);
-          if (invertedImage) {
-            const invertedResult = await worker.recognize(invertedImage);
-            const invertedParsed = parseSubtitle(invertedResult.data);
-            if (invertedParsed.subtitle &&
-                (!parsed.subtitle || invertedParsed.subtitle.confidence > parsed.subtitle.confidence)) {
-              result = invertedResult;
-              parsed = invertedParsed;
-            }
-          }
-        }
+        const result = await worker.recognize(image);
+        const parsed = parseSubtitle(result.data);
 
         consecutiveOcrErrors = 0;
         const raw = clean(result.data.text || "");
@@ -491,12 +443,16 @@
             candidateCount = 1;
           }
 
-          const isNewPhrase = !lastEnqueuedKey || !similarCaption(key, lastEnqueuedKey);
+          const now = Date.now();
+          recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 10000);
+          const wasQueuedRecently = recentQueuedCaptions.some(item => similarCaption(key, item.key));
+          const isNewPhrase = (!lastEnqueuedKey || !similarCaption(key, lastEnqueuedKey)) && !wasQueuedRecently;
           const stableOrClear = candidateCount >= 2 || subtitle.confidence >= 68;
 
           if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
-            // Latest subtitle wins: never let old dialogue accumulate behind newer lines.
+            recentQueuedCaptions.push({ key, time: now });
+            // Keep only the newest waiting line, never a backlog of old subtitles.
             queue.length = 0;
             queue.push(subtitle);
             setQueueCount();
