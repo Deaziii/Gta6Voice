@@ -470,10 +470,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
 
         const [result] = await worker.predict(image, {
-          // Restore the PP-OCRv5 detector that previously read subtitles correctly.
-          // Run it on WASM; the recognizer session is routed to WebGPU by the ORT shim.
-          textDetLimitType: "max",
-          textDetLimitSideLen: 960,
+          // Match the known-good v0.35 pipeline settings.
           textRecScoreThresh: 0.15,
           textDetThresh: 0.25,
           textDetBoxThresh: 0.35
@@ -499,11 +496,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         if (result?.runtime) {
           try {
             runtimeReport = "Runtime: " + JSON.stringify({
-              bundle: "onnxruntime-web/webgpu",
+              bundle: "onnxruntime-web",
               ...result.runtime,
-              inputSize: result?.image ? result.image.width + "x" + result.image.height : "unknown",
-              mode: "hybrid-detector-wasm-recognizer-webgpu",
-              detector: { model: "PP-OCRv5_mobile_det", provider: result.runtime.detProvider, limitType: "max", limitSideLen: 960, thresh: 0.25, boxThresh: 0.35 }
+              mode: "known-good-wasm",
+              detector: { model: "PP-OCRv5_mobile_det", thresh: 0.25, boxThresh: 0.35 }
             });
           } catch (_) {
             runtimeReport = "Runtime: метаданные получены";
@@ -598,7 +594,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   async function createOcrWorker() {
     $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Загружаю PP-OCRv5 детектор (WASM) и русское распознавание (WebGPU).";
+    $("lastText").textContent = "Загружаю проверенную русскую OCR-модель в штатном режиме WASM.";
     const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
     const engine = await PaddleOCR.create({
       textDetectionModelName: "PP-OCRv5_mobile_det",
@@ -607,11 +603,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
       },
       worker: true,
+      // Restore the known-good PaddleOCR.js 0.4.2 runtime configuration.
+      // Let the SDK load its matching ONNX Runtime WASM build.
       ortOptions: {
-        // Prefer the dedicated native WebGPU bundle; fall back to WASM when
-        // this browser cannot create a WebGPU inference session.
-        backend: "auto",
-        wasmPaths: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/",
+        backend: "wasm",
         numThreads: 1,
         simd: true
       }
