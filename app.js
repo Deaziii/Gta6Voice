@@ -494,7 +494,15 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
           (timingParts.length ? " · " + timingParts.join(" / ") : "");
 
         const subtitle = parsed.subtitle;
-        $("rawText").textContent = parsed.report;
+        let runtimeReport = "Runtime: metadata недоступна";
+        if (result?.runtime) {
+          try {
+            runtimeReport = "Runtime: " + JSON.stringify(result.runtime);
+          } catch (_) {
+            runtimeReport = "Runtime: метаданные получены";
+          }
+        }
+        $("rawText").textContent = parsed.report + "\\n\\n" + runtimeReport;
         if (!subtitle) {
           $("ocrState").textContent = "Фильтр отсеял шум";
           $("lastText").textContent = "Чистая русская реплика пока не найдена.";
@@ -593,7 +601,9 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       },
       worker: true,
       ortOptions: {
-        backend: "wasm",
+        // Prefer the device GPU when WebGPU is available; PaddleOCR.js
+        // automatically falls back to WASM if the GPU provider cannot start.
+        backend: "auto",
         numThreads: 1,
         simd: true
       }
