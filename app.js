@@ -470,10 +470,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
 
         const [result] = await worker.predict(image, {
-          // Limit detector input size for slower Android CPUs.
-          // Keep the original crop resolution for recognition quality.
-          textDetLimitType: "max",
-          textDetLimitSideLen: 640,
+          // Use PaddleOCR.js general-text default (960 px) so small subtitle
+          // glyphs are not shrunk too aggressively before GPU detection.
           // Keep borderline subtitle rows so the app can stabilize them across frames.
           textRecScoreThresh: 0.15,
           textDetThresh: 0.25,
@@ -490,6 +488,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         const timingParts = [];
         if (Number.isFinite(detMs)) timingParts.push("дет. " + Math.round(detMs));
         if (Number.isFinite(recMs)) timingParts.push("текст " + Math.round(recMs));
+        if (Number.isFinite(Number(metrics.detectedBoxes))) timingParts.push("области " + Number(metrics.detectedBoxes));
+        if (Number.isFinite(Number(metrics.recognizedCount))) timingParts.push("строки " + Number(metrics.recognizedCount));
         $("latency").textContent = Math.round(measuredMs) + " мс OCR" +
           (timingParts.length ? " · " + timingParts.join(" / ") : "");
 
