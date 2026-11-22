@@ -470,6 +470,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
 
         const [result] = await worker.predict(image, {
+          // Limit detector input size for slower Android CPUs.
+          // Keep the original crop resolution for recognition quality.
+          textDetLimitType: "max",
+          textDetLimitSideLen: 640,
           // Keep borderline subtitle rows so the app can stabilize them across frames.
           textRecScoreThresh: 0.15,
           textDetThresh: 0.25,
