@@ -470,14 +470,14 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
 
         const [result] = await worker.predict(image, {
-          // Override PaddleOCR.js 0.4.2's internal 64px/min pipeline default.
-          // Match the PP-OCRv5 mobile detector's official 960px/max inference setting.
+          // PP-OCRv6 Tiny detector: mobile-oriented DB detector with official thresholds.
+          // Keep the proven East-Slavic PP-OCRv5 recognition model unchanged.
           textDetLimitType: "max",
           textDetLimitSideLen: 960,
-          // Keep borderline subtitle rows so the app can stabilize them across frames.
           textRecScoreThresh: 0.15,
-          textDetThresh: 0.25,
-          textDetBoxThresh: 0.35
+          textDetThresh: 0.2,
+          textDetBoxThresh: 0.4,
+          textDetUnclipRatio: 1.4
         });
         const parsed = parsePaddleResult(result);
 
@@ -503,7 +503,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
               bundle: "onnxruntime-web/webgpu",
               ...result.runtime,
               inputSize: result?.image ? result.image.width + "x" + result.image.height : "unknown",
-              detector: { limitType: "max", limitSideLen: 960, thresh: 0.25, boxThresh: 0.35 }
+              detector: { model: "PP-OCRv6_tiny_det", limitType: "max", limitSideLen: 960, thresh: 0.2, boxThresh: 0.4, unclipRatio: 1.4 }
             });
           } catch (_) {
             runtimeReport = "Runtime: метаданные получены";
@@ -598,10 +598,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   async function createOcrWorker() {
     $("ocrState").textContent = "Загружаю модель PaddleOCR…";
-    $("lastText").textContent = "Загружаю русскую OCR-модель и включаю WebGPU; при ошибке будет WASM.";
+    $("lastText").textContent = "Загружаю быстрый PP-OCRv6 Tiny детектор и проверенную русскую модель; GPU включён.";
     const modelBase = new URL(import.meta.env.BASE_URL, window.location.origin);
     const engine = await PaddleOCR.create({
-      textDetectionModelName: "PP-OCRv5_mobile_det",
+      textDetectionModelName: "PP-OCRv6_tiny_det",
       textRecognitionModelName: "eslav_PP-OCRv5_mobile_rec",
       textRecognitionModelAsset: {
         url: new URL("models/eslav_PP-OCRv5_mobile_rec.tar", modelBase).href
