@@ -601,9 +601,9 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       },
       worker: true,
       ortOptions: {
-        // Prefer the device GPU when WebGPU is available; PaddleOCR.js
-        // automatically falls back to WASM if the GPU provider cannot start.
-        backend: "auto",
+        // Keep the known-good WASM backend: WebGPU initialized on this device
+        // but failed to return reliable subtitle text.
+        backend: "wasm",
         numThreads: 1,
         simd: true
       }
