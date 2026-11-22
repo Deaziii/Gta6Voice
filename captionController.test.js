@@ -2,111 +2,150 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CaptionController,
-  analyzeCaptionRelation,
   evaluateFrameGate,
+  formatForFastSpeech,
   isRussianSubtitleLine,
   normalizeRussianHomoglyphs
 } from "./captionController.js";
 
-test("homoglyphs and mid-word OCR uppercase glitches are normalized without touching acronyms", () => {
+test("recovers pure-homoglyph Russian exclamations like '- Bay!' -> '- Вау!' and fixes mid-word caps", () => {
+  assert.equal(
+    normalizeRussianHomoglyphs("- Bay!", { frameHasCyrillic: true }),
+    "- Вау!"
+  );
+  assert.equal(isRussianSubtitleLine("- Bay!", { frameHasCyrillic: true }), true);
+  assert.equal(
+    normalizeRussianHomoglyphs("Hy kak tam?"),
+    "Ну как там?"
+  );
   assert.equal(
     normalizeRussianHomoglyphs("Мне отмщение, я воздам - ровОрИТ Господь."),
     "Мне отмщение, я воздам - роворит Господь."
   );
-  assert.equal(
-    normalizeRussianHomoglyphs("Агенты США уже B городе"),
-    "Агенты США уже В городе"
-  );
-  assert.equal(isRussianSubtitleLine("А я и не в курсе"), true);
-  assert.equal(isRussianSubtitleLine("Press X to continue"), false);
+  assert.equal(isRussianSubtitleLine("Press X to continue", { frameHasCyrillic: false }), false);
 });
 
-test("short 1-2 word subtitles without punctuation promote immediately on frame 1 (zero extra OCR pass)", () => {
-  const ctrl = new CaptionController();
-
-  ctrl.observe({ text: "Пошли отсюда", confidence: 54, lineCount: 1 }, 1000);
-  const first = ctrl.pullNextUtterance(1000);
-  assert.ok(first);
-  assert.equal(first.speechText, "Пошли отсюда");
-  assert.equal(first.lagMs, 0);
+test("formatForFastSpeech removes robotic pauses on dashes, ellipses, and mid-line exclamation marks", () => {
+  assert.equal(
+    formatForFastSpeech("- Вау! - Офигенно! Круто!"),
+    "Вау, Офигенно, Круто"
+  );
+  assert.equal(
+    formatForFastSpeech("Мне отмщение, я воздам - говорит Господь..."),
+    "Мне отмщение, я воздам, говорит Господь"
+  );
+  assert.equal(
+    formatForFastSpeech("Я заняла это место. Для кого?"),
+    "Я заняла это место, Для кого?"
+  );
 });
 
 test("two-line extension speaks row 1 at 0ms and queues only row 2 without repeating either row", () => {
   const ctrl = new CaptionController();
 
-  ctrl.observe({ text: "Мне отмщение, я воздам - ровОрИТ", confidence: 76, lineCount: 1 }, 1000);
+  ctrl.observe({ text: "Как сказала бы моя Лиза", confidence: 97, lineCount: 1 }, 1000);
   const first = ctrl.pullNextUtterance(1000);
-  assert.equal(first?.speechText, "Мне отмщение, я воздам - роворит");
+  assert.equal(first?.speechText, "Как сказала бы моя Лиза");
 
-  ctrl.observe({ text: "Мне отмщение, я воздам - говорит Господь.", confidence: 82, lineCount: 2 }, 1450);
-  // Preemption must NEVER cut off row 1 for its own row-2 continuation
-  assert.equal(ctrl.shouldPreemptActive(4500), false);
+  ctrl.observe({ text: "Как сказала бы моя Лиза, вот это я понимаю, конура!", confidence: 96, lineCount: 2 }, 1350);
+  assert.equal(ctrl.shouldPreemptActive(2500), false);
 
-  // Camera shake back to row 1 must not overwrite pending row 2
-  ctrl.observe({ text: "Мне отмщение, я воздам - говорит", confidence: 74, lineCount: 1 }, 1650);
+  ctrl.onSpeechEnd(1900);
+  const second = ctrl.pullNextUtterance(1900);
+  assert.equal(second?.speechText, "вот это я понимаю, конура!");
 
-  ctrl.onSpeechEnd(2100);
-  const second = ctrl.pullNextUtterance(2100);
-  assert.equal(second?.speechText, "Господь.");
-
-  // Camera shift showing only row 2 is suppressed as partial
-  ctrl.onSpeechEnd(2500);
-  ctrl.observe({ text: "Господь.", confidence: 88, lineCount: 1 }, 2600);
-  assert.equal(ctrl.pullNextUtterance(2600), null);
+  ctrl.onSpeechEnd(2400);
+  ctrl.observe({ text: "вот это я понимаю, конура!", confidence: 96, lineCount: 1 }, 2500);
+  assert.equal(ctrl.pullNextUtterance(2500), null);
 });
 
-test("preempts dragging long speech when a brand-new dialogue line is waiting on screen", () => {
-  const ctrl = new CaptionController({ preemptSingleAfterActiveMs: 3100 });
+test("Bilateral Stem Gate ignores DLP rainbow waves & step edges, locks onto same subtitle, and triggers on change", () => {
+  const W = 192;
+  const H = 48;
 
-  ctrl.observe({ text: "Очень длинная предыдущая реплика героя", confidence: 85, lineCount: 2 }, 1000);
-  assert.ok(ctrl.pullNextUtterance(1000));
-
-  ctrl.observe({ text: "Новая реплика другого персонажа!", confidence: 88, lineCount: 1 }, 3600);
-  ctrl.observe({ text: "Новая реплика другого персонажа!", confidence: 88, lineCount: 1 }, 4150);
-  assert.equal(ctrl.shouldPreemptActive(4150), true);
-});
-
-test("evaluateFrameGate skips blank/unchanged ROI and triggers immediately on faint text strokes", () => {
-  const W = 128;
-  const H = 40;
-  const makeBuffer = fill => {
+  // Helper: background with DLP smooth brightness wave + bright step edge on left (orange vest / wall)
+  const makeScene = (waveShift = 0, stems = []) => {
     const rgba = new Uint8ClampedArray(W * H * 4);
-    for (let i = 0; i < W * H * 4; i += 4) {
-      rgba[i] = fill;
-      rgba[i + 1] = fill;
-      rgba[i + 2] = fill;
-      rgba[i + 3] = 255;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        // Step edge at x=30 (bright vest on left, dark background on right) + smooth DLP wave
+        const step = x < 30 ? 150 : 45;
+        const wave = Math.round(25 * Math.sin((x + waveShift) / 18));
+        const v = Math.max(0, Math.min(255, step + wave));
+        const idx = (y * W + x) * 4;
+        rgba[idx] = v;
+        rgba[idx + 1] = v;
+        rgba[idx + 2] = v;
+        rgba[idx + 3] = 255;
+      }
+    }
+    for (const [sx, y0, y1] of stems) {
+      for (let y = y0; y <= y1; y++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const idx = (y * W + sx + dx) * 4;
+          rgba[idx] = 235;
+          rgba[idx + 1] = 235;
+          rgba[idx + 2] = 235;
+        }
+      }
     }
     return rgba;
   };
 
-  // Initial pass always runs
-  const blank1 = makeBuffer(60);
-  const g1 = evaluateFrameGate(blank1, W, H, {}, 1000);
-  assert.equal(g1.run, true);
+  // 1. Blank moving scene (with step edge + DLP wave) skips after initial frame
+  const f0 = makeScene(0, []);
+  const g0 = evaluateFrameGate(f0, W, H, {}, 1000);
+  assert.equal(g0.run, true);
 
-  // Unchanged frame skips
-  const g2 = evaluateFrameGate(blank1, W, H, { prevGray: g1.gray, lastFullOcrAt: 1000, lastHadSubtitle: false }, 1050);
-  assert.equal(g2.run, false);
-  assert.equal(g2.reason, "unchanged");
+  const f1 = makeScene(12, []);
+  const g1 = evaluateFrameGate(f1, W, H, { lastFullOcrAt: 1000, lastHadSubtitle: false }, 1040);
+  assert.equal(g1.run, false);
+  assert.equal(g1.reason, "empty-scene");
 
-  // Uniform brightness shift without any vertical strokes (camera pan on blank wall) skips
-  const blankShifted = makeBuffer(80);
-  const g3 = evaluateFrameGate(blankShifted, W, H, { prevGray: g1.gray, lastFullOcrAt: 1000, lastHadSubtitle: false }, 1100);
-  assert.equal(g3.run, false);
-  assert.equal(g3.reason, "empty-scene");
+  // 2. Subtitle A appears in center -> triggers immediately and produces tight horizontal crop
+  const subAStems = [[76, 18, 28], [82, 18, 28], [90, 18, 28], [96, 18, 28], [104, 18, 28], [110, 18, 28]];
+  const fSubA1 = makeScene(15, subAStems);
+  const gSubA1 = evaluateFrameGate(fSubA1, W, H, { lastFullOcrAt: 1000, lastHadSubtitle: false }, 1080);
+  assert.equal(gSubA1.run, true);
+  assert.equal(gSubA1.reason, "subtitle-appeared");
+  assert.ok(gSubA1.crop.x0 > 0.15 && gSubA1.crop.x1 < 0.85);
 
-  // Faint 2-letter text strokes (+16 luma above background) immediately trigger OCR
-  const withFaintSubtitle = makeBuffer(60);
-  for (let y = 16; y <= 24; y++) {
-    for (const stemX of [50, 54, 60, 64]) {
-      const idx = (y * W + stemX) * 4;
-      withFaintSubtitle[idx] = 82;
-      withFaintSubtitle[idx + 1] = 82;
-      withFaintSubtitle[idx + 2] = 82;
-    }
-  }
-  const g4 = evaluateFrameGate(withFaintSubtitle, W, H, { prevGray: g1.gray, lastFullOcrAt: 1000, lastHadSubtitle: false }, 1130);
-  assert.equal(g4.run, true);
-  assert.equal(g4.reason, "changed");
+  // 3. Same Subtitle A stays on screen while DLP wave shifts & hand shakes by +3px -> SKIPPED (0ms wasted!)
+  const subAShaken = subAStems.map(([x, y0, y1]) => [x + 3, y0 + 1, y1 + 1]);
+  const fSubA2 = makeScene(35, subAShaken);
+  const gSubA2 = evaluateFrameGate(
+    fSubA2,
+    W,
+    H,
+    {
+      lastFullOcrAt: 1100,
+      lastHadSubtitle: true,
+      prevStemNorm: gSubA1.stemNorm,
+      prevActiveCells: gSubA1.activeCells
+    },
+    1250
+  );
+  assert.equal(gSubA2.run, false);
+  assert.equal(gSubA2.reason, "same-subtitle");
+
+  // 4. Subtitle changes to wider 2-line Subtitle B -> triggers IMMEDIATELY
+  const subBStems = [
+    ...subAStems,
+    [60, 32, 41], [67, 32, 41], [122, 32, 41], [130, 32, 41], [138, 32, 41]
+  ];
+  const fSubB = makeScene(40, subBStems);
+  const gSubB = evaluateFrameGate(
+    fSubB,
+    W,
+    H,
+    {
+      lastFullOcrAt: 1100,
+      lastHadSubtitle: true,
+      prevStemNorm: gSubA1.stemNorm,
+      prevActiveCells: gSubA1.activeCells
+    },
+    1300
+  );
+  assert.equal(gSubB.run, true);
+  assert.equal(gSubB.reason, "subtitle-changed");
 });

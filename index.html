@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#101319">
   <meta name="description" content="Озвучка русских субтитров GTA на телефоне в реальном времени">
   <title>GTA6 Voice</title>
-  <link rel="stylesheet" href="./styles.css?v=0.53">
+  <link rel="stylesheet" href="./styles.css?v=0.54">
 </head>
 <body>
   <main class="app">
@@ -42,13 +42,25 @@
         <button id="testSpeech" class="secondary" type="button">Тест голоса</button>
       </div>
 
-      <div class="speed-bar">
-        <label for="ocrSpeed">Режим OCR:</label>
-        <select id="ocrSpeed">
-          <option value="turbo" selected>Турбо · миним. задержка (576px)</option>
-          <option value="balanced">Баланс · средние субтитры (704px)</option>
-          <option value="sharp">Чётко · мелкий шрифт вдали (896px)</option>
-        </select>
+      <div class="mode-grid">
+        <div class="speed-bar">
+          <label for="ocrSpeed">OCR:</label>
+          <select id="ocrSpeed">
+            <option value="ultra" selected>Ультра · авто-кроп (480px)</option>
+            <option value="turbo">Турбо · стандарт (576px)</option>
+            <option value="balanced">Чётко · мелкий шрифт (704px)</option>
+          </select>
+        </div>
+        <div class="speed-bar">
+          <label for="voicePace">Темп речи:</label>
+          <select id="voicePace">
+            <option value="1.25">Живой (1.25×)</option>
+            <option value="1.45" selected>Быстрый (1.45×)</option>
+            <option value="1.65">Очень быстрый (1.65×)</option>
+            <option value="1.85">Сверхбыстрый (1.85×)</option>
+            <option value="custom">Свой ползунок</option>
+          </select>
+        </div>
       </div>
 
       <p class="speech-status">Состояние голоса: <span id="speechState" class="muted">Включена</span></p>
@@ -73,13 +85,13 @@
         <h2 class="settings-title">Настройки</h2>
 
         <details class="settings-group">
-          <summary><span><b>Камера и зона субтитров</b><small>Чем уже рамка по высоте, тем быстрее OCR</small></span><output id="roiLabel">X 6% · Y 43% · 88% × 13%</output></summary>
+          <summary><span><b>Камера и зона субтитров</b><small>Положение рамки сохраняется автоматически</small></span><output id="roiLabel">X 8% · Y 43% · 84% × 12%</output></summary>
           <div class="settings-content">
-            <label class="range-label"><span>Положение по горизонтали</span><output id="roiLeftValue">6%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="6"></label>
-            <label class="range-label"><span>Положение по вертикали</span><output id="roiTopValue">43%</output><input id="roiTop" type="range" min="0" max="85" step="1" value="43"></label>
-            <label class="range-label"><span>Ширина рамки</span><output id="roiWidthValue">88%</output><input id="roiWidth" type="range" min="20" max="100" step="1" value="88"></label>
-            <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">13%</output><input id="roiHeight" type="range" min="3" max="70" step="1" value="13"></label>
-            <p class="hint">Держи рамку узкой полосой строго по строкам субтитров: захват лишнего фона сверху и снизу напрямую увеличивает время детекции.</p>
+            <label class="range-label"><span>Положение по горизонтали</span><output id="roiLeftValue">8%</output><input id="roiLeft" type="range" min="0" max="80" step="1" value="8"></label>
+            <label class="range-label"><span>Положение по вертикали</span><output id="roiTopValue">43%</output><input id="roiTop" type="range" min="0" max="88" step="1" value="43"></label>
+            <label class="range-label"><span>Ширина рамки</span><output id="roiWidthValue">84%</output><input id="roiWidth" type="range" min="20" max="100" step="1" value="84"></label>
+            <label class="range-label"><span>Высота рамки</span><output id="roiHeightValue">12%</output><input id="roiHeight" type="range" min="3" max="70" step="1" value="12"></label>
+            <p class="hint">Держи рамку узкой полосой строго по строкам субтитров: алгоритм дополнительно обрезает пустые края слева и справа вокруг букв.</p>
           </div>
         </details>
 
@@ -92,33 +104,33 @@
         </details>
 
         <details class="settings-group">
-          <summary><span><b>Голос и звучание</b><small>Голос персонажей, скорость и громкость</small></span></summary>
+          <summary><span><b>Голос и звучание</b><small>Точная настройка скорости и голосов</small></span></summary>
           <div class="settings-content">
-            <label class="range-label"><span>Скорость речи</span><output id="rateValue">1.15×</output><input id="rate" type="range" min="0.85" max="1.60" step="0.05" value="1.15"></label>
+            <label class="range-label"><span>Скорость речи</span><output id="rateValue">1.45×</output><input id="rate" type="range" min="1.00" max="2.20" step="0.05" value="1.45"></label>
             <label class="range-label"><span>Громкость речи</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
             <div class="voice-grid">
-              <label>Обычный голос<select id="defaultVoice"><option value="">Русский голос Android по умолчанию</option></select></label>
+              <label>Обычный голос<select id="defaultVoice"><option value="">Быстрый русский голос Android</option></select></label>
               <label>Jason<select id="jasonVoice"><option value="">Автоматически</option></select></label>
               <label>Lucia<select id="luciaVoice"><option value="">Автоматически</option></select></label>
             </div>
-            <p class="hint">Список голосов зависит от Android и установленного движка синтеза речи. Если в телефоне один русский голос, оба героя будут звучать одинаково.</p>
+            <p class="hint">При быстрой смене реплик скорость автоматически повышается ещё на +0.12…0.25×, а лишние паузы на тире и точках убираются.</p>
           </div>
         </details>
 
         <details class="settings-group">
           <summary><span><b>Проверка озвучки текстом</b><small>Введи свою фразу и послушай результат</small></span></summary>
           <div class="settings-content">
-            <textarea id="manualText" rows="2" placeholder="Введи фразу, чтобы проверить русский голос…">Как дела? Поехали!</textarea>
+            <textarea id="manualText" rows="2" placeholder="Введи фразу, чтобы проверить русский голос…">Вау! Офигенно! Вот это скорость!</textarea>
             <button id="speakManual" class="secondary full">Произнести текст</button>
           </div>
         </details>
 
       </section>
-      <p class="hint">Открывай страницу напрямую в Chrome на Android (не внутри Telegram-браузера) — там WASM работает заметно быстрее.</p>
+      <p class="hint">Выключи энергосбережение на телефоне во время просмотра — при низком заряде Android режет частоту процессора в 2 раза и замедляет OCR.</p>
     </section>
-    <footer>GTA6 Voice · прототип 0.53 · распознавание может ошибаться на бликах и движении</footer>
+    <footer>GTA6 Voice · прототип 0.54 · распознавание может ошибаться на бликах и движении</footer>
   </main>
   <canvas id="frame" hidden></canvas>
-  <script type="module" src="./app.js?v=0.53"></script>
+  <script type="module" src="./app.js?v=0.54"></script>
 </body>
 </html>

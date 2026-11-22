@@ -6,6 +6,21 @@ const HOMOGLYPH_MAP = {
 const NON_HOMOGLYPH_LATIN = /[DFGIJLNQRSUVWZbdfghijklmnqrstuvwz]/;
 const VALID_SINGLE_LETTER_WORDS = new Set(["а", "и", "о", "у", "я", "в", "к", "с", "ж", "б"]);
 
+// Pure-homoglyph Russian words that OCR often emits in Latin script (e.g. "- Bay!" -> "- Вау!")
+const UNAMBIGUOUS_HOMOGLYPH_RUSSIAN = new Set([
+  "ну", "неа", "ух", "хех", "ха", "хаха", "хохо", "как", "так", "там", "тут", "кто", "сто", "ау", "ее"
+]);
+const CONTEXTUAL_HOMOGLYPH_EXCLAMATIONS = new Set([
+  "вау", "ах", "ох", "не", "вот", "кот", "рот", "пот", "тот"
+]);
+
+// Small OCR-specific transliteration fallbacks. They are only applied when the
+// line already has Russian/dialogue context, so ordinary English stays Latin.
+const ROMANIZED_RUSSIAN_OCR = new Map([
+  ["kak", "как"],
+  ["tam", "там"]
+]);
+
 export const cleanText = value => (value || "").replace(/[|_]/g, " ").replace(/\s+/g, " ").trim();
 
 /**
@@ -23,28 +38,82 @@ export function fixMidWordCase(text) {
   });
 }
 
+function mapHomoglyphToken(token) {
+  return token.replace(/[ABCEHKMOPTXYaceopxy]/g, ch => HOMOGLYPH_MAP[ch] || ch);
+}
+
 /**
- * Fix Latin lookalike characters produced by OCR inside Russian subtitle lines
- * and normalize mid-word OCR capitalization glitches.
+ * Fix Latin lookalike characters produced by OCR inside Russian subtitle lines,
+ * including short pure-homoglyph Russian exclamations like "- Bay!" -> "- Вау!".
  */
-export function normalizeRussianHomoglyphs(value) {
+export function normalizeRussianHomoglyphs(value, options = {}) {
   const cleaned = cleanText(value);
   if (!cleaned) return "";
+  const frameHasCyrillic = Boolean(options.frameHasCyrillic);
   const cyrillicCount = (cleaned.match(/[А-Яа-яЁё]/g) || []).length;
-  if (cyrillicCount < 1) return cleaned;
+  const hasDialoguePunct = /^[-—–]/.test(cleaned) || /[!?…]/.test(cleaned);
 
   const mapped = cleaned.split(" ").map(token => {
     const core = token.replace(/[^A-Za-zА-Яа-яЁё]/g, "");
-    if (!core || NON_HOMOGLYPH_LATIN.test(core)) return token;
+    if (!core) return token;
+
+    const coreLower = core.toLocaleLowerCase("ru-RU");
+    if (frameHasCyrillic || cyrillicCount >= 1 || hasDialoguePunct) {
+      const romanized = ROMANIZED_RUSSIAN_OCR.get(coreLower);
+      if (romanized) {
+        const replacement = /^[A-Z]/.test(core)
+          ? romanized[0].toLocaleUpperCase("ru-RU") + romanized.slice(1)
+          : romanized;
+        return token.replace(core, replacement);
+      }
+    }
+
+    if (NON_HOMOGLYPH_LATIN.test(core)) return token;
 
     const hasCyrillic = /[А-Яа-яЁё]/.test(core);
-    const isShortHomoglyphWord = cyrillicCount >= 2 && /^[ABCEHKMOPTXYaceopxy]{1,2}$/.test(core);
-    if (!hasCyrillic && !isShortHomoglyphWord) return token;
+    if (hasCyrillic) return mapHomoglyphToken(token);
 
-    return token.replace(/[ABCEHKMOPTXYaceopxy]/g, ch => HOMOGLYPH_MAP[ch] || ch);
+    if (/^[ABCEHKMOPTXYaceopxy]+$/.test(core)) {
+      const candidateRu = mapHomoglyphToken(core).toLocaleLowerCase("ru-RU");
+      if (cyrillicCount >= 2 && core.length <= 2) return mapHomoglyphToken(token);
+      if (UNAMBIGUOUS_HOMOGLYPH_RUSSIAN.has(candidateRu)) return mapHomoglyphToken(token);
+      if (
+        CONTEXTUAL_HOMOGLYPH_EXCLAMATIONS.has(candidateRu) &&
+        (frameHasCyrillic || cyrillicCount >= 1 || hasDialoguePunct)
+      ) {
+        return mapHomoglyphToken(token);
+      }
+    }
+    return token;
   }).join(" ");
 
   return fixMidWordCase(mapped);
+}
+
+/**
+ * Shape text specifically for fast, natural Android SpeechSynthesis delivery:
+ * removes dead 400ms pauses on dashes/ellipses/mid-line exclamation breaks while
+ * preserving natural clause rhythm and question intonation.
+ */
+export function formatForFastSpeech(text) {
+  let out = cleanText(text);
+  if (!out) return "";
+
+  out = out.replace(/^[-—–]+\s*/, "");
+  out = out.replace(/\s+[-—–]+\s+/g, ", ");
+  out = out.replace(/\.{2,}|…+/g, ", ");
+
+  const endsWithQuestion = /\?\s*$/.test(out);
+  out = out.replace(/[.!?]+(?=\s*,)/g, "");
+  out = out.replace(/[.!?]+\s+(?=[А-Яа-яЁёA-Za-z0-9])/g, ", ");
+  out = out.replace(/[,;:]+\s*,+/g, ", ");
+  out = out.replace(/\s+,/g, ",");
+  out = out.replace(/[.!,;:\s]+$/, "").trim();
+
+  if (endsWithQuestion && out && !out.endsWith("?")) {
+    out += "?";
+  }
+  return out;
 }
 
 export const normalizeKey = value => normalizeRussianHomoglyphs(value)
@@ -54,8 +123,8 @@ export const normalizeKey = value => normalizeRussianHomoglyphs(value)
   .replace(/\s+/g, " ")
   .trim();
 
-export function isRussianSubtitleLine(line) {
-  const value = normalizeRussianHomoglyphs(line);
+export function isRussianSubtitleLine(line, options = {}) {
+  const value = normalizeRussianHomoglyphs(line, options);
   const letters = value.match(/[A-Za-zА-Яа-яЁё]/g) || [];
   const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
   if (cyrillic.length < 2 || !letters.length) return false;
@@ -82,15 +151,46 @@ export function isRussianSubtitleLine(line) {
   return true;
 }
 
+const GRID_COLS = 24;
+const GRID_ROWS = 6;
+const GRID_SIZE = GRID_COLS * GRID_ROWS;
+
+function shiftedGridDistance(normNow, normPrev) {
+  let best = Infinity;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      let diff = 0;
+      for (let y = 0; y < GRID_ROWS; y++) {
+        const py = y + dy;
+        for (let x = 0; x < GRID_COLS; x++) {
+          const px = x + dx;
+          const curVal = normNow[y * GRID_COLS + x];
+          const prevVal = (py >= 0 && py < GRID_ROWS && px >= 0 && px < GRID_COLS)
+            ? normPrev[py * GRID_COLS + px]
+            : 0;
+          const d = curVal - prevVal;
+          diff += d < 0 ? -d : d;
+        }
+      }
+      if (diff < best) best = diff;
+    }
+  }
+  return best;
+}
+
 /**
- * Lightweight (<0.4ms) pre-OCR pixel check on a 128x40 RGBA thumbnail of the ROI.
- * Prevents locking the single-threaded WASM worker for 500-1500ms when the ROI
- * hasn't changed or when pointing at a completely blank wall/screen.
+ * Bilateral Stem Gate (<0.3ms on 192x48):
+ * 1. Detects thin bright vertical letter stems (`g - max(minLeft, minRight)`), completely
+ *    ignoring DLP projector rainbow bands, step edges (walls/clothes), and smooth actor motion.
+ * 2. Keeps the WASM worker 100% idle while an already-read subtitle stays on screen
+ *    (with +-1 cell handheld shake tolerance), eliminating random 1-1.3s busy-worker stalls.
+ * 3. Returns tight normalized crop bounds `[x0, y0, x1, y1]` around active text strokes
+ *    so `PP-OCRv5_mobile_det` scans a smaller, cleaner region free of peripheral noise.
  */
 export function evaluateFrameGate(rgba, width, height, state = {}, now = Date.now()) {
   const pixelCount = width * height;
   if (!rgba || rgba.length < pixelCount * 4) {
-    return { run: true, reason: "no-buffer", gray: null };
+    return { run: true, reason: "no-buffer", stemNorm: null, activeCells: 0, crop: null };
   }
 
   const gray = new Uint8Array(pixelCount);
@@ -98,81 +198,131 @@ export function evaluateFrameGate(rgba, width, height, state = {}, now = Date.no
     gray[i] = (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
   }
 
-  const prevGray = state.prevGray;
+  const cellW = Math.max(1, Math.floor(width / GRID_COLS));
+  const cellH = Math.max(1, Math.floor(height / GRID_ROWS));
+  const stemGrid = new Float32Array(GRID_SIZE);
+  const hitGrid = new Uint16Array(GRID_SIZE);
+
+  for (let y = 2; y < height - 2; y++) {
+    const row = y * width;
+    const cy = Math.min(GRID_ROWS - 1, Math.floor(y / cellH));
+    for (let x = 5; x < width - 5; x++) {
+      const g = gray[row + x];
+      if (g < 38) continue;
+
+      let minL = gray[row + x - 1];
+      if (gray[row + x - 2] < minL) minL = gray[row + x - 2];
+      if (gray[row + x - 3] < minL) minL = gray[row + x - 3];
+      if (gray[row + x - 4] < minL) minL = gray[row + x - 4];
+      if (gray[row + x - 5] < minL) minL = gray[row + x - 5];
+
+      let minR = gray[row + x + 1];
+      if (gray[row + x + 2] < minR) minR = gray[row + x + 2];
+      if (gray[row + x + 3] < minR) minR = gray[row + x + 3];
+      if (gray[row + x + 4] < minR) minR = gray[row + x + 4];
+      if (gray[row + x + 5] < minR) minR = gray[row + x + 5];
+
+      const base = minL > minR ? minL : minR;
+      const stem = g - base;
+      if (stem >= 13) {
+        const cx = Math.min(GRID_COLS - 1, Math.floor(x / cellW));
+        const idx = cy * GRID_COLS + cx;
+        stemGrid[idx] += stem;
+        hitGrid[idx] += 1;
+      }
+    }
+  }
+
+  let activeCells = 0;
+  let totalStem = 0;
+  let minCol = GRID_COLS;
+  let maxCol = -1;
+  let minRow = GRID_ROWS;
+  let maxRow = -1;
+
+  for (let cy = 0; cy < GRID_ROWS; cy++) {
+    for (let cx = 0; cx < GRID_COLS; cx++) {
+      const idx = cy * GRID_COLS + cx;
+      if (hitGrid[idx] >= 3 && stemGrid[idx] >= 52) {
+        activeCells++;
+        totalStem += stemGrid[idx];
+        if (cx < minCol) minCol = cx;
+        if (cx > maxCol) maxCol = cx;
+        if (cy < minRow) minRow = cy;
+        if (cy > maxRow) maxRow = cy;
+      } else {
+        stemGrid[idx] = 0;
+      }
+    }
+  }
+
   const lastFullOcrAt = Number(state.lastFullOcrAt) || 0;
   const lastHadSubtitle = Boolean(state.lastHadSubtitle);
-  const forceEveryMs = Number(state.forceEveryMs) || 1400;
+  const prevStemNorm = state.prevStemNorm || null;
+  const prevActiveCells = Number(state.prevActiveCells) || 0;
 
-  if (!prevGray || prevGray.length !== pixelCount || now - lastFullOcrAt >= forceEveryMs) {
-    return { run: true, reason: "periodic", gray };
+  if (activeCells < 2 || totalStem <= 0) {
+    if (!lastFullOcrAt) {
+      return { run: true, reason: "initial", stemNorm: null, activeCells: 0, crop: null };
+    }
+    return {
+      run: false,
+      reason: "empty-scene",
+      becameEmpty: lastHadSubtitle,
+      stemNorm: null,
+      activeCells: 0,
+      crop: null
+    };
   }
 
-  // 1. Tile-based Mean Absolute Difference (8x10 blocks) against last actual OCR frame
-  const tileW = 8;
-  const tileH = 10;
-  let maxTileMad = 0;
-  for (let ty = 0; ty <= height - tileH; ty += tileH) {
-    for (let tx = 0; tx <= width - tileW; tx += tileW) {
-      let sum = 0;
-      for (let dy = 0; dy < tileH; dy++) {
-        let idx = (ty + dy) * width + tx;
-        for (let dx = 0; dx < tileW; dx++, idx++) {
-          const diff = gray[idx] - prevGray[idx];
-          sum += diff < 0 ? -diff : diff;
-        }
-      }
-      const mad = sum / (tileW * tileH);
-      if (mad > maxTileMad) maxTileMad = mad;
-    }
+  const stemNorm = new Float32Array(GRID_SIZE);
+  for (let i = 0; i < GRID_SIZE; i++) {
+    stemNorm[i] = stemGrid[i] / totalStem;
   }
 
-  if (maxTileMad < 5.2) {
-    // Exact repeats can be skipped immediately. But a small non-zero change may
-    // still be faint subtitle text, so let the stroke check inspect it below.
-    let anyPixelChanged = false;
-    for (let i = 0; i < pixelCount; i++) {
-      if (gray[i] !== prevGray[i]) {
-        anyPixelChanged = true;
-        break;
-      }
-    }
-    if (!anyPixelChanged || lastHadSubtitle) {
-      return { run: false, reason: "unchanged", gray: prevGray };
-    }
+  const crop = {
+    x0: Math.max(0, (minCol - 3) / GRID_COLS),
+    x1: Math.min(1, (maxCol + 4) / GRID_COLS),
+    y0: Math.max(0, (minRow - 2) / GRID_ROWS),
+    y1: Math.min(1, (maxRow + 3) / GRID_ROWS)
+  };
+  if (crop.x1 - crop.x0 < 0.38) {
+    const mid = (crop.x0 + crop.x1) / 2;
+    crop.x0 = Math.max(0, mid - 0.19);
+    crop.x1 = Math.min(1, crop.x0 + 0.38);
+  }
+  if (crop.y1 - crop.y0 < 0.65) {
+    crop.y0 = 0;
+    crop.y1 = 1;
   }
 
-  // 2. When previous OCR saw no subtitle, check if ANY horizontal scanlines contain
-  // thin vertical stroke pairs (even very low contrast >= 9/255 passes).
-  if (!lastHadSubtitle) {
-    let activeStrokeRows = 0;
-    for (let y = 1; y < height - 1; y++) {
-      const rowOffset = y * width;
-      let pairsInRow = 0;
-      for (let x = 0; x < width - 3; x++) {
-        const g1 = gray[rowOffset + x + 2] - gray[rowOffset + x];
-        if (g1 >= 9 || g1 <= -9) {
-          for (let span = 1; span <= 8 && x + 2 + span < width; span++) {
-            const g2 = gray[rowOffset + x + 2 + span] - gray[rowOffset + x + span];
-            if ((g1 > 0 && g2 <= -9) || (g1 < 0 && g2 >= 9)) {
-              pairsInRow++;
-              x += span;
-              break;
-            }
-          }
-        }
-      }
-      if (pairsInRow >= 2) {
-        activeStrokeRows++;
-        if (activeStrokeRows >= 2) break;
-      }
-    }
-
-    if (activeStrokeRows < 2) {
-      return { run: false, reason: "empty-scene", gray: prevGray };
-    }
+  if (!prevStemNorm || prevActiveCells < 2) {
+    return { run: true, reason: "subtitle-appeared", stemNorm, activeCells, crop };
   }
 
-  return { run: true, reason: "changed", gray };
+  const cellRatio = activeCells / Math.max(1, prevActiveCells);
+  const dist = shiftedGridDistance(stemNorm, prevStemNorm);
+  const forceEveryMs = lastHadSubtitle ? 1900 : 1200;
+  // Handheld shake and DLP brightness waves can redistribute a few detected
+  // stems even when the subtitle itself has not changed.
+  const sameSubtitleDistance = 0.45;
+
+  if (
+    cellRatio >= 0.74 &&
+    cellRatio <= 1.34 &&
+    dist < sameSubtitleDistance &&
+    now - lastFullOcrAt < forceEveryMs
+  ) {
+    return {
+      run: false,
+      reason: lastHadSubtitle ? "same-subtitle" : "same-clutter",
+      stemNorm: prevStemNorm,
+      activeCells: prevActiveCells,
+      crop
+    };
+  }
+
+  return { run: true, reason: "subtitle-changed", stemNorm, activeCells, crop };
 }
 
 function levenshteinSimilarity(left, right) {
@@ -299,16 +449,16 @@ function isSpeakableFragment(text) {
 export class CaptionController {
   constructor(options = {}) {
     this.options = {
-      fastStartConfidence: 42,
-      emptyGraceMs: 220,
-      clearHistoryAfterEmptyMs: 1250,
-      historyWindowMs: 4600,
-      extensionAfterDoneWindowMs: 2300,
-      maxUnseenAgeMs: 1100,
-      staleAfterUnseenTotalMs: 1900,
-      maxPendingAgeMs: 2900,
-      preemptAfterActiveMs: 2400,
-      preemptSingleAfterActiveMs: 3100,
+      fastStartConfidence: 40,
+      emptyGraceMs: 180,
+      clearHistoryAfterEmptyMs: 1150,
+      historyWindowMs: 4400,
+      extensionAfterDoneWindowMs: 2200,
+      maxUnseenAgeMs: 1000,
+      staleAfterUnseenTotalMs: 1750,
+      maxPendingAgeMs: 2600,
+      preemptAfterActiveMs: 1450,
+      preemptSingleAfterActiveMs: 1950,
       ...options
     };
     this.reset();
@@ -333,7 +483,7 @@ export class CaptionController {
   observe(observation, now = Date.now()) {
     this.history = this.history.filter(entry => now - entry.completedAt <= this.options.historyWindowMs);
 
-    const rawText = normalizeRussianHomoglyphs(observation?.text || "");
+    const rawText = normalizeRussianHomoglyphs(observation?.text || "", { frameHasCyrillic: true });
     const speaker = observation?.speaker || "";
     const confidence = Number(observation?.confidence) || 0;
     const lineCount = Math.max(1, Number(observation?.lineCount) || 1);
@@ -543,7 +693,6 @@ export class CaptionController {
 
   shouldPreemptActive(now = Date.now()) {
     if (!this.active || !this.pending) return false;
-    // Never interrupt row 1 just to speak its own row-2 continuation.
     if (this.pending.suppressPrefixText) return false;
 
     const activeElapsed = now - this.active.startedAt;
@@ -553,7 +702,7 @@ export class CaptionController {
     if (activeElapsed >= this.options.preemptAfterActiveMs && this.droppedDuringActive >= 1) {
       return true;
     }
-    if (activeElapsed >= this.options.preemptSingleAfterActiveMs && now - this.pending.firstSeenAt >= 450) {
+    if (activeElapsed >= this.options.preemptSingleAfterActiveMs && now - this.pending.firstSeenAt >= 200) {
       return true;
     }
     return false;
@@ -607,10 +756,8 @@ export class CaptionController {
 
   #isCandidateReady(cand) {
     if (!cand) return false;
-    // Promote on the VERY FIRST scan for any normal Russian subtitle so we never
-    // pay an extra full OCR pass before TTS starts.
     if (cand.confidence >= this.options.fastStartConfidence) return true;
-    if (cand.hits >= 2 && cand.confidence >= 30) return true;
+    if (cand.hits >= 2 && cand.confidence >= 28) return true;
     return false;
   }
 
