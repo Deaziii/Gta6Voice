@@ -32,7 +32,6 @@ import {
 
   const captionController = new CaptionController();
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
-  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
   const clean = cleanText;
   const setStatus = value => { $("status").textContent = value; };
 
