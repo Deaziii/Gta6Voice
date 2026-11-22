@@ -599,6 +599,12 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
           // Accept a clear single read; require a second matching read only for middling confidence.
           const stableOrClear = subtitle.confidence >= 45 || candidateCount >= 2;
 
+          // If the newest pending caption is still visible, refresh its age instead
+          // of letting a valid line expire while the current utterance finishes.
+          if (relation.type === "same" && pendingItem && similarCaption(key, pendingItem.key)) {
+            pendingItem.queuedAt = now;
+          }
+
           if (stableOrClear && relation.type !== "same" && relation.type !== "partial" && !wasQueuedRecently) {
             let speechText = subtitle.text;
             let suppressPrefixText = "";
