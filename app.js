@@ -470,8 +470,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
 
         const [result] = await worker.predict(image, {
-          // Use PaddleOCR.js general-text default (960 px) so small subtitle
-          // glyphs are not shrunk too aggressively before GPU detection.
+          // Override PaddleOCR.js 0.4.2's internal 64px/min pipeline default.
+          // Match the PP-OCRv5 mobile detector's official 960px/max inference setting.
+          textDetLimitType: "max",
+          textDetLimitSideLen: 960,
           // Keep borderline subtitle rows so the app can stabilize them across frames.
           textRecScoreThresh: 0.15,
           textDetThresh: 0.25,
@@ -497,7 +499,12 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         let runtimeReport = "Runtime: metadata недоступна";
         if (result?.runtime) {
           try {
-            runtimeReport = "Runtime: " + JSON.stringify({ bundle: "onnxruntime-web/webgpu", ...result.runtime });
+            runtimeReport = "Runtime: " + JSON.stringify({
+              bundle: "onnxruntime-web/webgpu",
+              ...result.runtime,
+              inputSize: result?.image ? result.image.width + "x" + result.image.height : "unknown",
+              detector: { limitType: "max", limitSideLen: 960, thresh: 0.25, boxThresh: 0.35 }
+            });
           } catch (_) {
             runtimeReport = "Runtime: метаданные получены";
           }
