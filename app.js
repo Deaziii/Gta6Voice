@@ -264,7 +264,8 @@
     const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
     if (cyrillic.length < 2 || !letters.length) return false;
     if (cyrillic.length / letters.length < 0.82) return false;
-    if (Number.isFinite(confidence) && confidence < 30) return false;
+    // Tesseract часто занижает confidence у верхней строки двухстрочного субтитра.
+    // Не отбрасываем строку только из-за confidence: сначала проверяем сам русский текст.
     const words = value.split(/\s+/).filter(Boolean);
     const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
     if (tinyWords > 2 || tinyWords / Math.max(1, words.length) > 0.3) return false;
@@ -321,8 +322,8 @@
   function similarCaption(a, b) {
     if (!a || !b) return false;
     if (a === b) return true;
-    const left = a.replace(/\\s+/g, " ").trim();
-    const right = b.replace(/\\s+/g, " ").trim();
+    const left = a.replace(/\s+/g, " ").trim();
+    const right = b.replace(/\s+/g, " ").trim();
     const maxLength = Math.max(left.length, right.length);
     if (!maxLength || Math.abs(left.length - right.length) / maxLength > 0.22) return false;
 
@@ -444,7 +445,9 @@
           }
 
           const now = Date.now();
-          recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 10000);
+          // Короткое окно защищает от повторного чтения одного кадра,
+          // но не блокирует похожую реплику, сказанную позже.
+          recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 3500);
           const wasQueuedRecently = recentQueuedCaptions.some(item => similarCaption(key, item.key));
           const isNewPhrase = (!lastEnqueuedKey || !similarCaption(key, lastEnqueuedKey)) && !wasQueuedRecently;
           // Fast subtitles may exist for only one OCR cycle.
@@ -454,8 +457,8 @@
           if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
             recentQueuedCaptions.push({ key, time: now });
-            // Keep only the newest waiting line, never a backlog of old subtitles.
-            queue.length = 0;
+            // Не выкидываем ожидающие реплики: иначе быстрые субтитры теряются,
+            // пока Android ещё произносит предыдущую фразу.
             queue.push(subtitle);
             setQueueCount();
             pumpSpeechQueue();
