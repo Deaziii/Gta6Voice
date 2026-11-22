@@ -1,3 +1,5 @@
+import { PaddleOCR } from "@paddleocr/paddleocr-js";
+
 (() => {
   "use strict";
   const $ = id => document.getElementById(id);
@@ -262,15 +264,82 @@
     const value = clean(line);
     const letters = value.match(/[A-Za-zА-Яа-яЁё]/g) || [];
     const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
-    if (cyrillic.length < 2 || !letters.length) return false;
+    if (cyrillic.length < 1 || !letters.length) return false;
     if (cyrillic.length / letters.length < 0.82) return false;
     // Tesseract часто занижает confidence у верхней строки двухстрочного субтитра.
     // Не отбрасываем строку только из-за confidence: сначала проверяем сам русский текст.
     const words = value.split(/\s+/).filter(Boolean);
     const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
     if (tinyWords > 2 || tinyWords / Math.max(1, words.length) > 0.3) return false;
-    if (!/[аеёиоуыэюя]/i.test(value)) return false;
+    if (cyrillic.length > 1 && !/[аеёиоуыэюя]/i.test(value)) return false;
     return true;
+  }
+
+
+  function parsePaddleResult(result) {
+    const items = Array.isArray(result?.items) ? result.items : [];
+    const boxes = items.map((item, index) => {
+      const points = Array.isArray(item.poly)
+        ? item.poly.filter(point => Array.isArray(point) && point.length >= 2 &&
+          Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+        : [];
+      const xs = points.map(point => Number(point[0]));
+      const ys = points.map(point => Number(point[1]));
+      const minX = xs.length ? Math.min(...xs) : index;
+      const maxX = xs.length ? Math.max(...xs) : index + 1;
+      const minY = ys.length ? Math.min(...ys) : index;
+      const maxY = ys.length ? Math.max(...ys) : index + 1;
+      const rawScore = Number(item.score);
+      const confidence = Number.isFinite(rawScore)
+        ? (rawScore <= 1 ? rawScore * 100 : rawScore)
+        : 0;
+      return {
+        text: clean(item.text),
+        confidence,
+        left: minX,
+        centerY: (minY + maxY) / 2,
+        height: Math.max(1, maxY - minY),
+        index
+      };
+    }).filter(item => item.text).sort((a, b) =>
+      a.centerY - b.centerY || a.left - b.left
+    );
+
+    // Paddle returns detected text regions. Group horizontally adjacent regions
+    // on the same visual row, then preserve the top-to-bottom reading order.
+    const rows = [];
+    for (const item of boxes) {
+      let row = rows.find(candidate =>
+        Math.abs(candidate.centerY - item.centerY) <=
+        Math.max(candidate.height, item.height) * 0.55
+      );
+      if (!row) {
+        row = { centerY: item.centerY, height: item.height, items: [] };
+        rows.push(row);
+      }
+      row.items.push(item);
+      const count = row.items.length;
+      row.centerY = row.items.reduce((sum, entry) => sum + entry.centerY, 0) / count;
+      row.height = row.items.reduce((sum, entry) => sum + entry.height, 0) / count;
+    }
+
+    const lines = rows.sort((a, b) => a.centerY - b.centerY).map(row => {
+      const ordered = row.items.sort((a, b) => a.left - b.left);
+      return {
+        text: clean(ordered.map(item => item.text).join(" ")),
+        confidence: ordered.reduce((sum, item) => sum + item.confidence, 0) / ordered.length
+      };
+    }).filter(line => line.text);
+
+    const parsed = parseSubtitle({ lines });
+    const debugRows = lines.map(line =>
+      "[" + Math.round(line.confidence) + "%] " + line.text
+    );
+    return {
+      ...parsed,
+      report: (parsed.report || "PaddleOCR: строки не найдены.") +
+        (debugRows.length ? "\n\nPaddleOCR строки:\n" + debugRows.join("\n") : "")
+    };
   }
 
   function parseSubtitle(data) {
@@ -400,13 +469,14 @@
           continue;
         }
 
-        const result = await worker.recognize(image);
-        const parsed = parseSubtitle(result.data);
+        const [result] = await worker.predict(image);
+        const parsed = parsePaddleResult(result);
 
         consecutiveOcrErrors = 0;
-        const raw = clean(result.data.text || "");
-        $("rawText").textContent = raw || "Внутри рамки нет распознанного текста.";
-        $("latency").textContent = Math.round(performance.now() - started) + " мс OCR";
+        const measuredMs = Number(result?.metrics?.totalMs);
+        $("latency").textContent = Math.round(
+          Number.isFinite(measuredMs) ? measuredMs : performance.now() - started
+        ) + " мс OCR";
 
         const subtitle = parsed.subtitle;
         $("rawText").textContent = parsed.report;
@@ -459,6 +529,7 @@
             recentQueuedCaptions.push({ key, time: now });
             // Не выкидываем ожидающие реплики: иначе быстрые субтитры теряются,
             // пока Android ещё произносит предыдущую фразу.
+            if (queue.length >= 3) queue.shift();
             queue.push(subtitle);
             setQueueCount();
             pumpSpeechQueue();
@@ -471,19 +542,19 @@
         $("ocrState").textContent = "Ошибка OCR · повторяю";
         $("lastText").textContent = "Сбой распознавания: " + errorText;
         if (consecutiveOcrErrors >= 2 && scanning) {
-          $("ocrState").textContent = "Перезапускаю OCR…";
+          $("ocrState").textContent = "Перезапускаю PaddleOCR…";
           try {
             const failedWorker = worker;
             worker = null;
             if (failedWorker) {
-              try { await failedWorker.terminate(); } catch (terminateError) {
-                console.warn("OCR worker terminate:", terminateError);
+              try { await failedWorker.dispose(); } catch (terminateError) {
+                console.warn("PaddleOCR dispose:", terminateError);
               }
             }
             if (scanning) {
               worker = await createOcrWorker();
               consecutiveOcrErrors = 0;
-              $("ocrState").textContent = "OCR перезапущен";
+              $("ocrState").textContent = "PaddleOCR перезапущен";
               $("lastText").textContent = "Распознавание восстановлено. Жду субтитры…";
             }
           } catch (restartError) {
@@ -503,17 +574,19 @@
   }
 
   async function createOcrWorker() {
-    const newWorker = await Tesseract.createWorker("rus", 1, {
-      logger: message => {
-        if (message.status === "loading language traineddata") $("ocrState").textContent = "Загружаю русский OCR…";
+    $("ocrState").textContent = "Загружаю модель PaddleOCR…";
+    $("lastText").textContent = "Первый запуск: загружаю русскую модель распознавания. Это может занять время.";
+    const engine = await PaddleOCR.create({
+      lang: "ru",
+      ocrVersion: "PP-OCRv5",
+      worker: true,
+      ortOptions: {
+        backend: "wasm",
+        numThreads: 1,
+        simd: true
       }
     });
-    await newWorker.setParameters({
-      tessedit_pageseg_mode: "6",
-      preserve_interword_spaces: "1",
-      tessedit_char_whitelist: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдеёжзийклмнопрстуфхцчшщъыьэюя0123456789.,!?…:;()- "
-    });
-    return newWorker;
+    return engine;
   }
 
   $("startCamera").addEventListener("click", async () => {
@@ -576,7 +649,7 @@
     if (worker) {
       const oldWorker = worker;
       worker = null;
-      try { await oldWorker.terminate(); } catch (_) {}
+      try { await oldWorker.dispose(); } catch (_) {}
     }
     while (loopRunning) await wait(40);
     cancelSpeechAndQueue();
