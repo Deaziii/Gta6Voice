@@ -1,0 +1,39 @@
+name: Export GTA6 Voice handoff archive
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "HANDOFF/**"
+      - ".github/workflows/export-handoff.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/GTA6Voice-Handoff
+          git archive --format=tar HEAD | tar -xf - -C /tmp/GTA6Voice-Handoff
+          printf '%s\n' "$(git rev-parse HEAD)" > /tmp/GTA6Voice-Handoff/HANDOFF/EXPORT_COMMIT.txt
+          printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/GTA6Voice-Handoff/HANDOFF/EXPORTED_AT_UTC.txt
+          cd /tmp
+          zip -qr -0 GTA6Voice-source-and-handoff.zip GTA6Voice-Handoff
+          unzip -t GTA6Voice-source-and-handoff.zip
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta6voice-source-handoff
+          path: /tmp/GTA6Voice-source-and-handoff.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
