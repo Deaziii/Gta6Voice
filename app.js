@@ -1,10 +1,16 @@
 import { PaddleOCR } from "@paddleocr/paddleocr-js";
+import {
+  CaptionController,
+  cleanText,
+  isRussianSubtitleLine,
+  normalizeRussianHomoglyphs
+} from "./captionController.js";
 
 (() => {
   "use strict";
   const $ = id => document.getElementById(id);
   const video = $("camera"), canvas = $("frame");
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const ctx = canvas.getContext("2d", { willReadFrequently: true, alpha: false });
 
   let stream = null;
   let worker = null;
@@ -14,27 +20,41 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
   let recognitionEnabled = true;
   let audioUnlocked = false;
   let activeSpeech = false;
-  let activeSpeechItem = null;
-  let lastSpokenText = "";
+  let activeSpeechStartedAt = 0;
   let speechWatchdog = null;
+  let speechToken = 0;
   let voices = [];
-  let previousCandidate = "";
-  let candidateCount = 0;
-  let lastEnqueuedKey = "";
-  let recentQueuedCaptions = [];
-  let lastEmptyStartedAt = 0;
-  let emptyCaptionReads = 0;
-  let lastScanAt = 0;
+  let cachedRuntimeReport = "";
   let consecutiveOcrErrors = 0;
-  let consecutiveEmptyReads = 0;
-  const queue = [];
+  let lastProcessedVideoTime = -1;
+  let lastRoiSignature = "";
+  let sameFrameSkips = 0;
 
+  const captionController = new CaptionController();
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
-  const clean = value => (value || "").replace(/[|_]/g, " ").replace(/\s+/g, " ").trim();
-  const normalize = value => clean(value).toLocaleLowerCase("ru-RU")
-    .replace(/[^а-яёa-z0-9 ]/gi, "").replace(/\s+/g, " ").trim();
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const clean = cleanText;
   const setStatus = value => { $("status").textContent = value; };
-  const setQueueCount = () => { $("queueState").textContent = String(queue.length + (activeSpeech ? 1 : 0)); };
+
+  function updateDiagnostics(now = Date.now()) {
+    const snap = captionController.getSnapshot(now);
+    const queueLabel = snap.hasActive && snap.hasPending
+      ? "1 + 1 ждёт"
+      : snap.hasActive
+        ? "1 говорит"
+        : snap.hasPending
+          ? "1 ждёт"
+          : snap.hasCandidate
+            ? "стаб…"
+            : "0";
+    $("queueState").textContent = queueLabel;
+    $("ttsLag").textContent = snap.lastLagMs !== null ? Math.round(snap.lastLagMs) + " мс" : "—";
+    const speechMs = activeSpeech && activeSpeechStartedAt
+      ? now - activeSpeechStartedAt
+      : snap.lastSpeechMs;
+    $("speechDuration").textContent = speechMs !== null ? (speechMs / 1000).toFixed(1) + " с" : "—";
+    $("droppedCount").textContent = String(snap.dropped + snap.stale);
+  }
   function updateSpeechButton() {
     $("toggleSpeech").textContent = speechEnabled ? "Озвучка: ВКЛ" : "Озвучка: ВЫКЛ";
     $("toggleSpeech").setAttribute("aria-pressed", speechEnabled ? "true" : "false");
@@ -180,26 +200,45 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
   }
 
   function pumpSpeechQueue() {
-    if (!speechEnabled || !audioUnlocked || activeSpeech || !queue.length || !("speechSynthesis" in window)) {
-      setQueueCount();
+    const now = Date.now();
+    if (!speechEnabled || !audioUnlocked || !("speechSynthesis" in window)) {
+      updateDiagnostics(now);
       return;
     }
 
-    const item = queue.shift();
-    if (item?.queuedAt && Date.now() - item.queuedAt > 3000) {
-      // Do not play dialogue that has already fallen several seconds behind the scene.
-      setQueueCount();
-      window.setTimeout(pumpSpeechQueue, 0);
+    if (activeSpeech) {
+      if (captionController.shouldPreemptActive(now)) {
+        // Invalidate callbacks from the utterance being stopped before cancelling it.
+        speechToken++;
+        try { speechSynthesis.cancel(); } catch (_) {}
+        if (speechWatchdog) window.clearTimeout(speechWatchdog);
+        speechWatchdog = null;
+        captionController.onSpeechEnd(now);
+        activeSpeech = false;
+        activeSpeechStartedAt = 0;
+      } else {
+        updateDiagnostics(now);
+        return;
+      }
+    }
+
+    const item = captionController.pullNextUtterance(now);
+    if (!item) {
+      updateDiagnostics(now);
       return;
     }
+
     activeSpeech = true;
-    activeSpeechItem = item;
-    setQueueCount();
+    activeSpeechStartedAt = now;
+    updateDiagnostics(now);
 
     let finished = false;
-    const utterance = new SpeechSynthesisUtterance(item.text);
+    const token = ++speechToken;
+    const utterance = new SpeechSynthesisUtterance(item.speechText);
     utterance.lang = "ru-RU";
-    utterance.rate = Number($("rate").value);
+    const baseRate = Number($("rate").value);
+    const catchUpBoost = item.lagMs > 1400 ? 0.22 : item.lagMs > 600 ? 0.10 : 0;
+    utterance.rate = clamp(baseRate + catchUpBoost, 0.85, 1.45);
     utterance.volume = Number($("volume").value);
     const voice = voiceFor(item.speaker);
     if (voice) utterance.voice = voice;
@@ -207,42 +246,44 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     const armWatchdog = () => {
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = window.setTimeout(() => {
-        if (finished) return;
+        if (finished || token !== speechToken) return;
         console.warn("TTS watchdog: forcing queue recovery");
         try { speechSynthesis.cancel(); } catch (_) {}
         finishSpeech();
-      }, 20000);
+      }, 14000);
     };
 
     function finishSpeech() {
-      if (finished) return;
+      if (finished || token !== speechToken) return;
       finished = true;
+      const endedAt = Date.now();
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = null;
-      lastSpokenText = item?.sourceText || item?.text || lastSpokenText;
+      captionController.onSpeechEnd(endedAt);
       activeSpeech = false;
-      activeSpeechItem = null;
+      activeSpeechStartedAt = 0;
       $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
-      setQueueCount();
-      window.setTimeout(pumpSpeechQueue, 40);
+      updateDiagnostics(endedAt);
+      window.setTimeout(pumpSpeechQueue, 0);
     }
 
     utterance.onstart = () => {
+      if (token !== speechToken) return;
+      activeSpeechStartedAt = Date.now();
       $("speechState").textContent = "Говорит";
+      updateDiagnostics(activeSpeechStartedAt);
       armWatchdog();
     };
     utterance.onboundary = armWatchdog;
     utterance.onend = finishSpeech;
     utterance.onerror = event => {
       console.warn("Speech synthesis error", event);
-      $("speechState").textContent = "Повторяю очередь после ошибки";
       finishSpeech();
     };
 
     try {
       speechSynthesis.resume();
       speechSynthesis.speak(utterance);
-      // Some Android WebViews do not fire onstart reliably. Keep a recovery timer from enqueue time.
       armWatchdog();
     } catch (error) {
       console.error(error);
@@ -252,41 +293,17 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
   }
 
   function cancelSpeechAndQueue() {
-    queue.length = 0;
+    speechToken++;
+    captionController.clearQueueAndSpeech();
     if (speechWatchdog) window.clearTimeout(speechWatchdog);
     speechWatchdog = null;
     activeSpeech = false;
-    activeSpeechItem = null;
+    activeSpeechStartedAt = 0;
     if ("speechSynthesis" in window) {
       try { speechSynthesis.cancel(); } catch (_) {}
     }
-    setQueueCount();
+    updateDiagnostics();
   }
-
-  const SHORT_RUSSIAN_WORDS = new Set([
-    "а","и","о","у","я","ё","в","к","с","н","не","ни","на","но","ну","да","до","за","из","от","об",
-    "во","вы","мы","ты","он","она","они","оно","по","под","при","про","то","те","это","эта","эти",
-    "же","ли","бы","ах","ох","ой","эй","ух","их","им","ему","ей","её","всё","все","так","как",
-    "там","тут","где","кто","что","чем","чей","мой","твой","ваш","наш"
-  ]);
-  const RUSSIAN_VOWELS = /[аеёиоуыэюя]/i;
-  const RUSSIAN_CONSONANT_RUN = /[бвгджзйклмнпрстфхцчшщ]{5,}/i;
-
-  function isRussianSubtitleLine(line, confidence) {
-    const value = clean(line);
-    const letters = value.match(/[A-Za-zА-Яа-яЁё]/g) || [];
-    const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
-    if (cyrillic.length < 1 || !letters.length) return false;
-    if (cyrillic.length / letters.length < 0.82) return false;
-    // OCR может занижать confidence у верхней строки двухстрочного субтитра.
-    // Не отбрасываем строку только из-за confidence: сначала проверяем сам русский текст.
-    const words = value.split(/\s+/).filter(Boolean);
-    const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
-    if (tinyWords > 2 || tinyWords / Math.max(1, words.length) > 0.3) return false;
-    if (cyrillic.length > 1 && !/[аеёиоуыэюя]/i.test(value)) return false;
-    return true;
-  }
-
 
   function parsePaddleResult(result) {
     const items = Array.isArray(result?.items) ? result.items : [];
@@ -306,7 +323,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         ? (rawScore <= 1 ? rawScore * 100 : rawScore)
         : 0;
       return {
-        text: clean(item.text),
+        text: cleanText(item.text),
         confidence,
         left: minX,
         centerY: (minY + maxY) / 2,
@@ -317,13 +334,11 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       a.centerY - b.centerY || a.left - b.left
     );
 
-    // Paddle returns detected text regions. Group horizontally adjacent regions
-    // on the same visual row, then preserve the top-to-bottom reading order.
     const rows = [];
     for (const item of boxes) {
       let row = rows.find(candidate =>
         Math.abs(candidate.centerY - item.centerY) <=
-        Math.max(candidate.height, item.height) * 0.55
+        Math.max(candidate.height, item.height) * 0.62
       );
       if (!row) {
         row = { centerY: item.centerY, height: item.height, items: [] };
@@ -338,7 +353,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     const lines = rows.sort((a, b) => a.centerY - b.centerY).map(row => {
       const ordered = row.items.sort((a, b) => a.left - b.left);
       return {
-        text: clean(ordered.map(item => item.text).join(" ")),
+        text: cleanText(ordered.map(item => item.text).join(" ")),
         confidence: ordered.reduce((sum, item) => sum + item.confidence, 0) / ordered.length
       };
     }).filter(line => line.text);
@@ -357,8 +372,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
   function parseSubtitle(data) {
     const namePattern = /^(Jason|Lucia|Tourist)\s*[:：-]?\s*/i;
     const lines = Array.isArray(data.lines) && data.lines.length
-      ? data.lines.map(line => ({ text: clean(line.text), confidence: Number(line.confidence) }))
-      : (data.text || "").split(/\r?\n/).map(text => ({ text: clean(text), confidence: Number(data.confidence) }));
+      ? data.lines.map(line => ({ text: cleanText(line.text), confidence: Number(line.confidence) }))
+      : (data.text || "").split(/\r?\n/).map(text => ({ text: cleanText(text), confidence: Number(data.confidence) }));
 
     let speaker = "";
     const accepted = [];
@@ -370,23 +385,25 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         const match = lineText.match(namePattern);
         if (match) {
           speaker = match[1];
-          lineText = clean(lineText.slice(match[0].length));
+          lineText = cleanText(lineText.slice(match[0].length));
           if (!lineText) {
             report.push("NAME · " + line.text);
             continue;
           }
         }
       }
-      const ok = isRussianSubtitleLine(lineText, line.confidence);
+      lineText = normalizeRussianHomoglyphs(lineText);
+      const ok = isRussianSubtitleLine(lineText);
       report.push((ok ? "OK" : "SKIP") + " [" +
         (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") +
-        "%] " + line.text);
+        "%] " + lineText);
       if (ok) accepted.push({ text: lineText, confidence: line.confidence });
     }
 
-    const text = clean(accepted.map(line => line.text).join(" "))
-      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’\-]/g, "")
-      .replace(/\s+/g, " ").trim();
+    const text = cleanText(accepted.map(line => line.text).join(" "))
+      .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»\-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
     if (text.length < 2 || text.length > 180) {
       return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
     }
@@ -395,95 +412,69 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
       : Number(data.confidence) || 0;
     return {
-      subtitle: { text, speaker, confidence },
+      subtitle: { text, speaker, confidence, lineCount: accepted.length },
       report: report.join("\n")
     };
   }
 
-  function similarCaption(a, b) {
-    if (!a || !b) return false;
-    if (a === b) return true;
-    const left = a.replace(/\s+/g, " ").trim();
-    const right = b.replace(/\s+/g, " ").trim();
-    const maxLength = Math.max(left.length, right.length);
-    if (!maxLength || Math.abs(left.length - right.length) / maxLength > 0.22) return false;
-
-    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-    for (let i = 1; i <= left.length; i++) {
-      const current = [i];
-      for (let j = 1; j <= right.length; j++) {
-        const cost = left[i - 1] === right[j - 1] ? 0 : 1;
-        current[j] = Math.min(
-          current[j - 1] + 1,
-          previous[j] + 1,
-          previous[j - 1] + cost
-        );
-      }
-      previous = current;
-    }
-    return 1 - previous[right.length] / maxLength >= 0.84;
-  }
-
-  // Compare whole subtitle captions across frames. If OCR first sees the
-  // upper row and only then the lower row, treat the second read as an extension,
-  // not as a completely new line that should be spoken twice.
-  function captionRelation(previousText, nextText) {
-    const previousWords = normalize(previousText).split(/\s+/).filter(Boolean);
-    const nextOriginalWords = clean(nextText).split(/\s+/).filter(Boolean);
-    const nextWords = normalize(nextText).split(/\s+/).filter(Boolean);
-    if (!previousWords.length || !nextWords.length) return { type: "new", delta: nextText };
-
-    const startsWith = (shortWords, longWords) =>
-      shortWords.length <= longWords.length &&
-      shortWords.every((word, index) => word === longWords[index]);
-
-    if (previousWords.length === nextWords.length && startsWith(previousWords, nextWords)) {
-      return { type: "same", delta: "" };
-    }
-    if (nextWords.length > previousWords.length && startsWith(previousWords, nextWords)) {
-      return {
-        type: "extension",
-        delta: nextOriginalWords.slice(previousWords.length).join(" ")
-      };
-    }
-    if (previousWords.length > nextWords.length && startsWith(nextWords, previousWords)) {
-      return { type: "partial", delta: "" };
-    }
-    if (similarCaption(previousWords.join(" "), nextWords.join(" "))) {
-      return { type: "same", delta: "" };
-    }
-    return { type: "new", delta: nextText };
-  }
-
+  /**
+   * Direct single-pass crop from video onto a reused canvas with a 14px quiet-zone
+   * border. This avoids resizing the full camera frame and allocating a canvas
+   * on every OCR pass.
+   */
   function prepareRecognitionImage() {
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) return null;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return null;
 
-    canvas.width = Math.min(1280, width);
-    canvas.height = Math.round(height * canvas.width / width);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const leftPct = Number($("roiLeft").value);
+    const topPct = Number($("roiTop").value);
+    const widthPct = Number($("roiWidth").value);
+    const heightPct = Number($("roiHeight").value);
+    const roiSig = leftPct + ":" + topPct + ":" + widthPct + ":" + heightPct;
 
-    const cropX = Math.floor(canvas.width * Number($("roiLeft").value) / 100);
-    const cropY = Math.floor(canvas.height * Number($("roiTop").value) / 100);
-    const cropWidth = Math.min(
-      Math.floor(canvas.width * Number($("roiWidth").value) / 100),
-      canvas.width - cropX
-    );
-    const cropHeight = Math.min(
-      Math.floor(canvas.height * Number($("roiHeight").value) / 100),
-      canvas.height - cropY
-    );
-    if (cropHeight < 10 || cropWidth < 10) return null;
+    const sx = Math.floor(vw * leftPct / 100);
+    const sy = Math.floor(vh * topPct / 100);
+    const sw = Math.min(Math.floor(vw * widthPct / 100), vw - sx);
+    const sh = Math.min(Math.floor(vh * heightPct / 100), vh - sy);
+    if (sw < 16 || sh < 12) return null;
 
-    const processed = document.createElement("canvas");
-    processed.width = Math.round(cropWidth * 1.8);
-    processed.height = Math.round(cropHeight * 1.8);
-    const pctx = processed.getContext("2d", { willReadFrequently: true });
-    pctx.filter = "grayscale(1) contrast(1.35)";
-    pctx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, processed.width, processed.height);
-    pctx.filter = "none";
-    return processed;
+    const currentVideoTime = Number(video.currentTime) || 0;
+    if (
+      currentVideoTime > 0 &&
+      currentVideoTime === lastProcessedVideoTime &&
+      roiSig === lastRoiSignature &&
+      sameFrameSkips < 1
+    ) {
+      sameFrameSkips += 1;
+      return "SAME_VIDEO_FRAME";
+    }
+    sameFrameSkips = 0;
+    lastProcessedVideoTime = currentVideoTime;
+    lastRoiSignature = roiSig;
+
+    const desiredScale = sh < 90 ? 2.2 : 1.8;
+    const scale = Math.min(desiredScale, 1960 / sw);
+    const drawW = Math.max(32, Math.round(sw * scale));
+    const drawH = Math.max(24, Math.round(sh * scale));
+    const pad = 14;
+    const outW = drawW + pad * 2;
+    const outH = drawH + pad * 2;
+
+    if (canvas.width !== outW || canvas.height !== outH) {
+      canvas.width = outW;
+      canvas.height = outH;
+    }
+
+    ctx.filter = "none";
+    ctx.fillStyle = "#0d0d0d";
+    ctx.fillRect(0, 0, outW, outH);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.filter = "grayscale(1) brightness(0.95) contrast(1.42)";
+    ctx.drawImage(video, sx, sy, sw, sh, pad, pad, drawW, drawH);
+    ctx.filter = "none";
+    return canvas;
   }
 
   async function scanLoop() {
@@ -493,27 +484,29 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     while (scanning) {
       if (!recognitionEnabled) {
         $("ocrState").textContent = "Распознавание остановлено";
-        await wait(200);
+        await wait(160);
         continue;
       }
-      // Never exit the scan loop just because the camera is between video frames.
       if (!worker || video.readyState < 2 || !video.videoWidth) {
         $("ocrState").textContent = "Жду кадр камеры…";
-        await wait(250);
+        await wait(120);
         continue;
       }
 
       const started = performance.now();
       try {
         const image = prepareRecognitionImage();
+        if (image === "SAME_VIDEO_FRAME") {
+          await wait(16);
+          continue;
+        }
         if (!image) {
           $("ocrState").textContent = "Проверь рамку";
-          await wait(250);
+          await wait(200);
           continue;
         }
 
         const [result] = await worker.predict(image, {
-          // Match the known-good v0.35 pipeline settings.
           textRecScoreThresh: 0.15,
           textDetThresh: 0.25,
           textDetBoxThresh: 0.35
@@ -529,119 +522,48 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         const timingParts = [];
         if (Number.isFinite(detMs)) timingParts.push("дет. " + Math.round(detMs));
         if (Number.isFinite(recMs)) timingParts.push("текст " + Math.round(recMs));
-        if (Number.isFinite(Number(metrics.detectedBoxes))) timingParts.push("области " + Number(metrics.detectedBoxes));
-        if (Number.isFinite(Number(metrics.recognizedCount))) timingParts.push("строки " + Number(metrics.recognizedCount));
-        $("latency").textContent = Math.round(measuredMs) + " мс OCR" +
+        if (Number.isFinite(Number(metrics.detectedBoxes))) timingParts.push("обл. " + Number(metrics.detectedBoxes));
+        if (Number.isFinite(Number(metrics.recognizedCount))) timingParts.push("стр. " + Number(metrics.recognizedCount));
+        $("latency").textContent = Math.round(measuredMs) + " мс" +
           (timingParts.length ? " · " + timingParts.join(" / ") : "");
 
+        const now = Date.now();
         const subtitle = parsed.subtitle;
-        let runtimeReport = "Runtime: metadata недоступна";
-        if (result?.runtime) {
-          try {
-            runtimeReport = "Runtime: " + JSON.stringify({
-              bundle: "onnxruntime-web",
-              ...result.runtime,
-              mode: "known-good-wasm",
-              detector: { model: "PP-OCRv5_mobile_det", thresh: 0.25, boxThresh: 0.35 }
-            });
-          } catch (_) {
-            runtimeReport = "Runtime: метаданные получены";
-          }
-        }
-        $("rawText").textContent = parsed.report + "\n\n" + runtimeReport;
-        if (!subtitle) {
-          $("ocrState").textContent = "Фильтр отсеял шум";
-          $("lastText").textContent = "Чистая русская реплика пока не найдена.";
-          previousCandidate = "";
-          candidateCount = 0;
-          emptyCaptionReads++;
-          consecutiveEmptyReads++;
-          if (!lastEmptyStartedAt) lastEmptyStartedAt = Date.now();
-          // Only unlock the last spoken line after it has genuinely disappeared for 5 seconds.
-          if (Date.now() - lastEmptyStartedAt >= 5000) {
-            lastEnqueuedKey = "";
-            lastSpokenText = "";
-            recentQueuedCaptions = [];
-            lastEmptyStartedAt = 0;
-          }
-        } else {
+        const observation = subtitle
+          ? { ...subtitle, lineCount: subtitle.lineCount || 1 }
+          : { text: "", confidence: 0, lineCount: 0 };
+        const snapshot = captionController.observe(observation, now);
+
+        if (subtitle) {
           $("ocrState").textContent = "Субтитры найдены";
           $("lastText").textContent = (subtitle.speaker ? subtitle.speaker + ": " : "") + subtitle.text;
-          emptyCaptionReads = 0;
-          consecutiveEmptyReads = 0;
-          lastEmptyStartedAt = 0;
-          const key = normalize(subtitle.text);
-          if (similarCaption(key, previousCandidate)) {
-            candidateCount++;
-            previousCandidate = key;
-          } else {
-            previousCandidate = key;
-            candidateCount = 1;
-          }
-
-          const now = Date.now();
-          // Keep only a tiny dedupe window. The active/pending caption below is
-          // the main duplicate guard; a long history can hide a genuinely repeated line.
-          recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 1800);
-
-          // While speech is playing, retain at most ONE pending item. Every new
-          // independent caption replaces the older pending one ("latest wins"),
-          // so the voice never spends the next 20 seconds reading an old queue.
-          const pendingItem = queue.length ? queue[0] : null;
-          const referenceItem = pendingItem || activeSpeechItem;
-          const referenceText = referenceItem
-            ? (referenceItem.sourceText || referenceItem.text)
-            : (lastSpokenText || "");
-          const referenceKey = referenceItem?.key || normalize(referenceText) || lastEnqueuedKey;
-          const relation = captionRelation(referenceText || referenceKey, subtitle.text);
-          const wasQueuedRecently = relation.type === "new" &&
-            recentQueuedCaptions.some(item => similarCaption(key, item.key));
-          // Accept a clear single read; require a second matching read only for middling confidence.
-          const stableOrClear = subtitle.confidence >= 45 || candidateCount >= 2;
-
-          // If the newest pending caption is still visible, refresh its age instead
-          // of letting a valid line expire while the current utterance finishes.
-          if (relation.type === "same" && pendingItem && similarCaption(key, pendingItem.key)) {
-            pendingItem.queuedAt = now;
-          }
-
-          if (stableOrClear && relation.type !== "same" && relation.type !== "partial" && !wasQueuedRecently) {
-            let speechText = subtitle.text;
-            let suppressPrefixText = "";
-            if (relation.type === "extension") {
-              if (pendingItem) {
-                // The pending caption has not been spoken yet: update it to the complete
-                // two-row caption, preserving any prefix already spoken by the active item.
-                suppressPrefixText = pendingItem.suppressPrefixText || "";
-                speechText = suppressPrefixText
-                  ? captionRelation(suppressPrefixText, subtitle.text).delta
-                  : subtitle.text;
-              } else {
-                // The first row may already be speaking (or just finished). Speak only
-                // the newly appeared words from the second row, not the whole caption again.
-                suppressPrefixText = referenceText;
-                speechText = relation.delta;
-              }
-            }
-
-            if (speechText && normalize(speechText).length >= 2) {
-              const speechItem = {
-                ...subtitle,
-                text: speechText,
-                sourceText: subtitle.text,
-                suppressPrefixText,
-                key,
-                queuedAt: now
-              };
-              // Replace, never append: one active phrase plus one fresh pending phrase maximum.
-              queue.splice(0, queue.length, speechItem);
-              lastEnqueuedKey = key;
-              recentQueuedCaptions.push({ key, time: now });
-              setQueueCount();
-              pumpSpeechQueue();
-            }
-          }
+        } else {
+          $("ocrState").textContent = "Фильтр отсеял шум";
+          $("lastText").textContent = "Чистая русская реплика пока не найдена.";
         }
+
+        if ($("debugOcr")?.open) {
+          if (!cachedRuntimeReport) {
+            if (result?.runtime) {
+              try {
+                cachedRuntimeReport = "Runtime: " + JSON.stringify({
+                  bundle: "onnxruntime-web",
+                  ...result.runtime,
+                  mode: "known-good-wasm-v0.52",
+                  detector: { model: "PP-OCRv5_mobile_det", thresh: 0.25, boxThresh: 0.35 }
+                });
+              } catch (_) {
+                cachedRuntimeReport = "Runtime: метаданные получены";
+              }
+            } else {
+              cachedRuntimeReport = "Runtime: метаданные недоступны";
+            }
+          }
+          $("rawText").textContent = parsed.report + "\n\n" + cachedRuntimeReport;
+        }
+
+        pumpSpeechQueue();
+        updateDiagnostics(now);
       } catch (error) {
         consecutiveOcrErrors++;
         console.error("OCR error", error);
@@ -661,6 +583,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
             if (scanning) {
               worker = await createOcrWorker();
               consecutiveOcrErrors = 0;
+              cachedRuntimeReport = "";
               $("ocrState").textContent = "PaddleOCR перезапущен";
               $("lastText").textContent = "Распознавание восстановлено. Жду субтитры…";
             }
@@ -673,8 +596,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
         }
       }
 
-      // OCR already takes most of the frame time; keep only a short cooldown.
-      await wait(60);
+      const cycleMs = performance.now() - started;
+      await wait(cycleMs > 90 ? 8 : 0);
     }
 
     loopRunning = false;
@@ -720,7 +643,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
       setStatus("Запуск камеры…");
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, advanced: [{ focusMode: "continuous" }] }
       });
       video.srcObject = stream;
       await video.play();
@@ -766,6 +689,8 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     }
     while (loopRunning) await wait(40);
     cancelSpeechAndQueue();
+    captionController.reset();
+    cachedRuntimeReport = "";
     $("placeholder").hidden = false;
     $("startCamera").disabled = false;
     $("stopCamera").disabled = true;
@@ -777,10 +702,9 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
 
   $("toggleRecognition").addEventListener("click", () => {
     recognitionEnabled = !recognitionEnabled;
-    previousCandidate = "";
-    candidateCount = 0;
-    consecutiveEmptyReads = 0;
+    if (!recognitionEnabled) captionController.clearQueueAndSpeech();
     updateRecognitionButton();
+    updateDiagnostics();
     $("ocrState").textContent = recognitionEnabled
       ? (scanning ? "Распознавание включено" : "Ожидание")
       : "Распознавание остановлено";
@@ -810,7 +734,10 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     audioUnlocked = true;
     cancelSpeechAndQueue();
     activeSpeech = true;
+    activeSpeechStartedAt = Date.now();
+    updateDiagnostics(activeSpeechStartedAt);
     let done = false;
+    const token = ++speechToken;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ru-RU";
     utterance.rate = Number($("rate").value);
@@ -819,24 +746,30 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     if (voice) utterance.voice = voice;
 
     const finish = () => {
-      if (done) return;
+      if (done || token !== speechToken) return;
       done = true;
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = null;
       activeSpeech = false;
+      activeSpeechStartedAt = 0;
       $("speechState").textContent = speechEnabled ? "Включена" : "Остановлена";
+      updateDiagnostics();
       pumpSpeechQueue();
     };
     const armWatchdog = () => {
       if (speechWatchdog) window.clearTimeout(speechWatchdog);
       speechWatchdog = window.setTimeout(() => {
+        if (token !== speechToken) return;
         try { speechSynthesis.cancel(); } catch (_) {}
         finish();
       }, 20000);
     };
 
     utterance.onstart = () => {
+      if (token !== speechToken) return;
+      activeSpeechStartedAt = Date.now();
       $("speechState").textContent = "Говорит";
+      updateDiagnostics(activeSpeechStartedAt);
       armWatchdog();
     };
     utterance.onboundary = armWatchdog;
@@ -866,6 +799,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     if (!document.hidden && scanning && "speechSynthesis" in window) {
       try { speechSynthesis.resume(); } catch (_) {}
       pumpSpeechQueue();
+      updateDiagnostics();
     }
   });
 
