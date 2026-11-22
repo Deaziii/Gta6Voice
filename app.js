@@ -447,7 +447,9 @@
           recentQueuedCaptions = recentQueuedCaptions.filter(item => now - item.time < 10000);
           const wasQueuedRecently = recentQueuedCaptions.some(item => similarCaption(key, item.key));
           const isNewPhrase = (!lastEnqueuedKey || !similarCaption(key, lastEnqueuedKey)) && !wasQueuedRecently;
-          const stableOrClear = candidateCount >= 2 || subtitle.confidence >= 68;
+          // Fast subtitles may exist for only one OCR cycle.
+          // Accept a single clear read; require two matching reads only when confidence is middling.
+          const stableOrClear = subtitle.confidence >= 45 || candidateCount >= 2;
 
           if (isNewPhrase && stableOrClear) {
             lastEnqueuedKey = key;
