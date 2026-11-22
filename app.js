@@ -266,7 +266,7 @@ import { PaddleOCR } from "@paddleocr/paddleocr-js";
     const cyrillic = value.match(/[А-Яа-яЁё]/g) || [];
     if (cyrillic.length < 1 || !letters.length) return false;
     if (cyrillic.length / letters.length < 0.82) return false;
-    // Tesseract часто занижает confidence у верхней строки двухстрочного субтитра.
+    // OCR может занижать confidence у верхней строки двухстрочного субтитра.
     // Не отбрасываем строку только из-за confidence: сначала проверяем сам русский текст.
     const words = value.split(/\s+/).filter(Boolean);
     const tinyWords = words.filter(word => /^[А-Яа-яЁё]$/i.test(word)).length;
