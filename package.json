@@ -1,9 +1,10 @@
 {
   "name": "gta6-voice",
   "private": true,
-  "version": "0.35.0",
+  "version": "0.52.0",
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "build": "vite build"
   },
   "dependencies": {
