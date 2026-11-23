@@ -233,9 +233,9 @@ function classifyExplicitSpeakerName(speaker, roleDefinitions = DEFAULT_ROLE_DEF
     if (names.some(name => norm === name || norm.startsWith(name + " "))) return role.id;
   }
   // Keep the legacy gender heuristic only for the four built-in roles.
-  if (/^(?:jason|джейсон)(?:$|\\s)/.test(norm)) return ROLES.JASON;
-  if (/^(?:lucia|люсия|лусия)(?:$|\\s)/.test(norm)) return ROLES.LUCIA;
-  const words = norm.split(/\\s+/).filter(Boolean);
+  if (/^(?:jason|джейсон)(?:$|\s)/.test(norm)) return ROLES.JASON;
+  if (/^(?:lucia|люсия|лусия)(?:$|\s)/.test(norm)) return ROLES.LUCIA;
+  const words = norm.split(/\s+/).filter(Boolean);
   for (const w of words) {
     if (FEMALE_SPEAKER_KEYWORDS.has(w)) return ROLES.FEMALE_NPC;
     if (MALE_A_EXCEPTIONS.has(w)) return ROLES.MALE_NPC;
