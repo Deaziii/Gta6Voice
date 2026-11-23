@@ -6,7 +6,6 @@ import {
   buildDialogueTurns,
   cleanText,
   evaluateFrameGate,
-  extractSpeakerTag,
   isRussianSubtitleLine,
   normalizeRussianHomoglyphs
 } from "./captionController.js";
@@ -149,7 +148,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         ocrSpeed: $("ocrSpeed").value,
         rate: Number($("rate").value),
         volume: Number($("volume").value),
-        showNames: Boolean($("showNames").checked),
         castMode: $("castMode").value,
         voiceMode: voiceEngine.mode,
         aiModel: $("aiModel").value,
@@ -195,7 +193,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         $("volumeValue").textContent = Math.round(v * 100) + "%";
         voiceEngine.volume = v;
       }
-      if (typeof prefs.showNames === "boolean") $("showNames").checked = prefs.showNames;
       if (prefs.castMode === "cinema_quad" || prefs.castMode === "gta_duo") {
         $("castMode").value = prefs.castMode;
         captionController.setCastMode(prefs.castMode);
@@ -502,7 +499,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     savePrefs();
   });
 
-  $("showNames").addEventListener("change", savePrefs);
 
   [
     [ROLES.JASON, "offlineJasonVoice"],
@@ -726,50 +722,31 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       : (data.text || "").split(/\r?\n/).map(text => ({ text: cleanText(text), confidence: Number(data.confidence) }));
 
     const frameHasCyrillic = lines.some(line => /[А-Яа-яЁё]/.test(line.text));
-    const parseSpeakerNames = $("showNames").checked;
-
-    let primarySpeaker = "";
     const accepted = [];
     const report = [];
 
     for (const line of lines) {
       if (!line.text) continue;
-      let lineText = line.text;
-      let lineSpeaker = "";
-
-      if (parseSpeakerNames) {
-        const extracted = extractSpeakerTag(lineText);
-        if (extracted.speaker) {
-          lineSpeaker = extracted.speaker;
-          if (!primarySpeaker) primarySpeaker = lineSpeaker;
-          lineText = extracted.text;
-          if (!lineText) {
-            report.push("NAME · " + line.text);
-            continue;
-          }
-        }
-      }
-
-      lineText = normalizeRussianHomoglyphs(lineText, { frameHasCyrillic });
+      const lineText = normalizeRussianHomoglyphs(line.text, { frameHasCyrillic });
       const ok = isRussianSubtitleLine(lineText, { frameHasCyrillic });
       report.push((ok ? "OK" : "SKIP") + " [" +
         (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") +
-        "%] " + (lineSpeaker ? lineSpeaker + ": " : "") + lineText);
+        "%] " + lineText);
 
       if (ok) {
         const sanitized = lineText
-          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\-]/g, "")
-          .replace(/\s+/g, " ")
+          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\\-]/g, "")
+          .replace(/\\s+/g, " ")
           .trim();
         if (sanitized.length >= 2) {
-          accepted.push({ text: sanitized, speaker: lineSpeaker, confidence: line.confidence });
+          accepted.push({ text: sanitized, confidence: line.confidence });
         }
       }
     }
 
     const text = cleanText(accepted.map(line => line.text).join(" "));
     if (text.length < 2 || text.length > 190) {
-      return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
+      return { subtitle: null, report: report.join("\\n") || "Нет текстовых строк в зоне сканирования." };
     }
 
     const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
@@ -785,12 +762,11 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     return {
       subtitle: {
         text,
-        speaker: primarySpeaker,
         confidence,
         lineCount: accepted.length,
         turns
       },
-      report: report.join("\n")
+      report: report.join("\\n")
     };
   }
 
@@ -1001,7 +977,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
                 cachedRuntimeReport = "Runtime: " + JSON.stringify({
                   bundle: "onnxruntime-web",
                   ...result.runtime,
-                  mode: "known-good-wasm-v0.55",
+                  mode: "known-good-wasm-v0.56",
                   detector: { model: "PP-OCRv5_mobile_det", thresh: 0.28, boxThresh: 0.48 }
                 });
               } catch (_) {
@@ -1179,30 +1155,44 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   });
 
   function speakStandalone(text, role = ROLES.JASON) {
-    if (!text) return;
+    const lines = String(text || "").split(/\\r?\\n/).map(cleanText).filter(Boolean);
+    if (!lines.length) {
+      $("manualTestStatus").textContent = "Введи текст для озвучки.";
+      return;
+    }
+
     voiceEngine.unlockAudio();
     cancelSpeechAndQueue();
     activeSpeech = true;
     activeSpeechStartedAt = Date.now();
-    renderRoleBadge(role, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
 
-    const turns = buildDialogueTurns(
-      text.split(/\r?\n/).map(line => {
-        const ex = extractSpeakerTag(line);
-        return { text: ex.text || line, speaker: ex.speaker };
-      }).filter(l => cleanText(l.text)),
-      { previousRole: "", castMode: $("castMode").value }
-    );
+    // Each non-empty line is a separate dialogue turn. Role assignment comes
+    // only from the selected cast mode and text cues, never from speaker names.
+    const dialogueLines = lines.map(line => ({
+      text: /^[-—–]/.test(line) ? line : "- " + line,
+      speaker: ""
+    }));
+    const turns = buildDialogueTurns(dialogueLines, {
+      previousRole: "",
+      castMode: $("castMode").value
+    });
+    const firstRole = turns[0]?.role || role;
+    renderRoleBadge(firstRole, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
+    $("manualTestStatus").textContent =
+      "Тест: " + (voiceEngine.mode === "elevenlabs" ? "ElevenLabs" : "Офлайн") +
+      " · " + ($("castMode").value === "cinema_quad" ? "4 роли" : "GTA Duo") +
+      " · реплик: " + turns.length;
 
     const item = {
-      speechText: text,
-      role,
-      turns: turns.length > 1 ? turns : [{ text, role }]
+      speechText: lines.join(" "),
+      role: firstRole,
+      turns: turns.length ? turns : [{ text: lines.join(" "), role }]
     };
 
     voiceEngine.speakItem(item, { catchUpBoost: 0 })
       .catch(err => {
         console.warn("Standalone speech error:", err);
+        $("manualTestStatus").textContent = "Ошибка озвучки: " + (err.message || String(err));
         $("speechState").textContent = "Ошибка озвучки";
       })
       .finally(() => {
@@ -1217,13 +1207,19 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   $("testSpeech").addEventListener("click", () => {
     populateOfflineVoiceSelects();
     speakStandalone(
-      "- Джейсон, уходим скорее!\n- Я понял, прыгай в машину!",
+      "- Джейсон, уходим скорее!\\n- Я понял, прыгай в машину!",
       ROLES.LUCIA
     );
   });
 
   $("speakManual").addEventListener("click", () => {
-    speakStandalone(cleanText($("manualText").value), ROLES.JASON);
+    const text = $("manualText").value;
+    if (voiceEngine.mode === "elevenlabs" && !voiceEngine.apiKey.trim()) {
+      $("manualTestStatus").textContent = "Для теста ElevenLabs сначала введи API-ключ выше.";
+      $("elevenApiKey").focus();
+      return;
+    }
+    speakStandalone(text, ROLES.JASON);
   });
 
   // PWA Service Worker + Offline Model Pre-Caching
@@ -1271,7 +1267,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=0.55").then(() => {
+      navigator.serviceWorker.register("./sw.js?v=0.56").then(() => {
         refreshOfflineCacheStatus();
       }).catch(err => {
         console.warn("SW registration skipped:", err);
