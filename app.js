@@ -735,8 +735,8 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
       if (ok) {
         const sanitized = lineText
-          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\\-]/g, "")
-          .replace(/\\s+/g, " ")
+          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\-]/g, "")
+          .replace(/\s+/g, " ")
           .trim();
         if (sanitized.length >= 2) {
           accepted.push({ text: sanitized, confidence: line.confidence });
@@ -746,7 +746,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
     const text = cleanText(accepted.map(line => line.text).join(" "));
     if (text.length < 2 || text.length > 190) {
-      return { subtitle: null, report: report.join("\\n") || "Нет текстовых строк в зоне сканирования." };
+      return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
     }
 
     const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
@@ -766,7 +766,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         lineCount: accepted.length,
         turns
       },
-      report: report.join("\\n")
+      report: report.join("\n")
     };
   }
 
@@ -1207,7 +1207,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   $("testSpeech").addEventListener("click", () => {
     populateOfflineVoiceSelects();
     speakStandalone(
-      "- Джейсон, уходим скорее!\\n- Я понял, прыгай в машину!",
+      "- Джейсон, уходим скорее!\n- Я понял, прыгай в машину!",
       ROLES.LUCIA
     );
   });
