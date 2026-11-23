@@ -176,7 +176,8 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         <label>Пол для автоматического определения<select data-role-field="gender" data-role-id="${escapeRoleText(role.id)}"><option value="m" ${role.gender === "m" ? "selected" : ""}>Мужской</option><option value="f" ${role.gender === "f" ? "selected" : ""}>Женский</option></select></label>
         <label>Офлайн-голос<select data-role-voice="offline" data-role-id="${escapeRoleText(role.id)}">${offlineOptions}</select></label>
         <label>Голос ElevenLabs<select data-role-voice="ai" data-role-id="${escapeRoleText(role.id)}">${aiOptions}</select></label>
-        <label class="range-label">Громкость <output data-role-volume-value="${escapeRoleText(role.id)}">${Math.round((voiceEngine.roleVolumes[role.id] ?? 1) * 100)}%</output><input type="range" min="0" max="1" step="0.05" data-role-volume="${escapeRoleText(role.id)}" value="${voiceEngine.roleVolumes[role.id] ?? 1}"></label>
+        <label>Тестовая фраза для этой роли<textarea rows="2" maxlength="500" data-role-field="testPhrase" data-role-id="${escapeRoleText(role.id)}" placeholder="Введи фразу, которую должен произнести этот персонаж">${escapeRoleText(role.testPhrase || ROLE_TEST_PHRASES[role.id] || (role.gender === "f" ? "Я не собираюсь это терпеть. Убирайтесь отсюда!" : "Эй, стой! Руки на виду!"))}</textarea></label>
+        <button type="button" class="secondary compact-btn" data-role-preview="${escapeRoleText(role.id)}">▶ Прослушать эту роль</button>
       `;
       const offlineSelect = row.querySelector('[data-role-voice="offline"]');
       const aiSelect = row.querySelector('[data-role-voice="ai"]');
@@ -218,14 +219,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       captionController.setRoleDefinitions(roleDefinitions);
       savePrefs();
     }
-    const volumeRole = event.target.dataset.roleVolume;
-    if (volumeRole) {
-      const value = clamp(Number(event.target.value), 0, 1);
-      voiceEngine.roleVolumes[volumeRole] = value;
-      const output = document.querySelector('[data-role-volume-value="' + volumeRole + '"]');
-      if (output) output.textContent = Math.round(value * 100) + "%";
-      savePrefs();
-    }
   });
 
   $("roleManagerList").addEventListener("change", event => {
@@ -245,6 +238,15 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   });
 
   $("roleManagerList").addEventListener("click", event => {
+    const previewId = event.target.dataset.rolePreview;
+    if (previewId) {
+      const role = roleDefinitions.find(item => item.id === previewId);
+      const phraseField = $("roleManagerList").querySelector('[data-role-field="testPhrase"][data-role-id="' + previewId + '"]');
+      const phrase = phraseField?.value.trim() || role?.testPhrase || ROLE_TEST_PHRASES[previewId] ||
+        (role?.gender === "f" ? "Я не собираюсь это терпеть. Убирайтесь отсюда!" : "Эй, стой! Руки на виду!");
+      if (role) speakStandalone(phrase, role.id, true);
+      return;
+    }
     const id = event.target.dataset.deleteRole;
     if (!id) return;
     roleDefinitions = roleDefinitions.filter(role => role.id !== id || role.builtin);
@@ -700,13 +702,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     } finally {
       btn.disabled = false;
     }
-  });
-
-  document.querySelectorAll("[data-preview-role]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const role = btn.getAttribute("data-preview-role") || ROLES.JASON;
-      speakStandalone(ROLE_TEST_PHRASES[role] || ROLE_TEST_PHRASES[ROLES.JASON], role, true);
-    });
   });
 
   function cancelSpeechAndQueue() {
@@ -1373,16 +1368,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       "- Джейсон, уходим скорее!\n- Я понял, прыгай в машину!",
       ROLES.LUCIA
     );
-  });
-
-  $("speakManual").addEventListener("click", () => {
-    const text = $("manualText").value;
-    if (voiceEngine.mode === "elevenlabs" && !voiceEngine.apiKey.trim()) {
-      $("manualTestStatus").textContent = "Для теста ElevenLabs сначала введи API-ключ выше.";
-      $("elevenApiKey").focus();
-      return;
-    }
-    speakStandalone(text, ROLES.JASON);
   });
 
   // PWA Service Worker + Offline Model Pre-Caching
