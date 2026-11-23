@@ -167,13 +167,10 @@
         </button>
       </div>
 
-      <div class="cast-bar">
-        <label for="castMode">Распределение ролей:</label>
-        <select id="castMode">
-          <option value="gta_duo" selected>GTA 6 · Джейсон + Люсия + второстепенные NPC</option>
-          <option value="cinema_quad">Кино / Сериал · чередование всех 4 голосов</option>
-        </select>
-      </div>
+      <select id="castMode" hidden aria-hidden="true" tabindex="-1">
+        <option value="gta_duo" selected>GTA 6 · Джейсон + Люсия + второстепенные NPC</option>
+        <option value="cinema_quad">Кино / Сериал · чередование всех 4 голосов</option>
+      </select>
 
       <!-- OFFLINE VOICE PANEL -->
       <div id="offlineVoicePanel" class="engine-body">
