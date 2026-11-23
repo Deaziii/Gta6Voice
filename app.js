@@ -1133,7 +1133,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
                 cachedRuntimeReport = "Runtime: " + JSON.stringify({
                   bundle: "onnxruntime-web",
                   ...result.runtime,
-                  mode: "known-good-wasm-v0.61",
+                  mode: "known-good-wasm-v0.62",
                   detector: { model: "PP-OCRv5_mobile_det", thresh: 0.28, boxThresh: 0.48 }
                 });
               } catch (_) {
