@@ -668,3 +668,30 @@ footer {
 @media (max-width: 380px) {
   .quick-controls { grid-template-columns: 1fr; }
 }
+
+.role-manager-list { display: grid; gap: 10px; margin-bottom: 10px; }
+.role-manager-card {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #101722;
+  min-width: 0;
+}
+.role-manager-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.role-manager-head strong { color: #f1f5fa; font-size: 13px; }
+.role-manager-card label { margin: 8px 0; }
+.role-manager-card input[type="text"],
+.role-manager-card textarea,
+.role-manager-card select {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  min-width: 0;
+}
+.role-manager-card textarea { min-height: 48px; }
+.role-manager-card .range-label { margin-top: 10px; }
+.role-manager-card .hint { margin-left: auto; font-size: 10px; }
+@media (min-width: 620px) {
+  .role-manager-card { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+  .role-manager-head, .role-manager-card .range-label { grid-column: 1 / -1; }
+}
