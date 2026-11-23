@@ -1,4 +1,4 @@
-const CACHE_NAME = "gta6-voice-offline-v0.64";
+const CACHE_NAME = "gta6-voice-offline-v0.65";
 const CORE_SHELL = [
   "./",
   "./index.html",
