@@ -2,7 +2,7 @@ const CACHE_NAME = "gta6-voice-offline-v0.65";
 const CORE_SHELL = [
   "./",
   "./index.html",
-  "./manifest.webmanifest?v=0.62"
+  "./manifest.webmanifest?v=0.65"
 ];
 
 self.addEventListener("install", event => {
