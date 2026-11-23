@@ -1428,7 +1428,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=0.58").then(() => {
+      navigator.serviceWorker.register("./sw.js?v=0.62").then(() => {
         refreshOfflineCacheStatus();
       }).catch(err => {
         console.warn("SW registration skipped:", err);
