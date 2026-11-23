@@ -21,7 +21,7 @@
         <div>
           <div class="title-row">
             <h1>GTA6 Voice</h1>
-            <span class="ver-tag">v0.58</span>
+            <span class="ver-tag">v0.59</span>
           </div>
           <p>Живая многоголосая озвучка субтитров · Offline &amp; AI</p>
         </div>
@@ -129,6 +129,17 @@
           <p>Авто-определение мужских, женских, главных и второстепенных ролей</p>
         </div>
       </div>
+
+      <section class="settings-area role-manager-area">
+        <details class="settings-group" open>
+          <summary><span><b>Редактор ролей и распознавания</b><small>Имена, псевдонимы и голоса для каждого персонажа</small></span></summary>
+          <div class="settings-content">
+            <div id="roleManagerList" class="role-manager-list"></div>
+            <button id="addRoleBtn" class="secondary full" type="button">＋ Добавить роль</button>
+            <p class="hint">OCR ищет имя или псевдоним в начале строки субтитра. Совпавшее имя назначает именно эту роль; если имя не распознано, работает автоматическое распределение по грамматике и режиму диалога.</p>
+          </div>
+        </details>
+      </section>
 
       <div class="engine-tabs" role="tablist" aria-label="Выбор движка озвучки">
         <button id="modeOfflineBtn" class="engine-tab active" role="tab" aria-selected="true" type="button">
