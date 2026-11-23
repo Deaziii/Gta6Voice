@@ -29,15 +29,31 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Cache Russian OCR model
+        uses: actions/cache@v4
+        with:
+          path: |
+            .model/eslav
+            public/models/eslav_PP-OCRv5_mobile_rec.tar
+          key: russian-ocr-eslav-ppocrv5-v1
       - name: Prepare Russian OCR model
+        shell: bash
         run: |
           mkdir -p public/models .model/eslav
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true" \
-            --output .model/eslav/inference.onnx
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true" \
-            --output .model/eslav/inference.yml
+
+          # Reuse a verified cached model. If the cache is incomplete, fetch it again.
+          if ! grep -Eq '^[[:space:]]*model_name:[[:space:]]*eslav_PP-OCRv5_mobile_rec([[:space:]]|$)' .model/eslav/inference.yml 2>/dev/null \
+            || [ ! -s .model/eslav/inference.onnx ] \
+            || [ "$(wc -c < .model/eslav/inference.onnx 2>/dev/null || echo 0)" -le 1000000 ]; then
+            rm -f .model/eslav/inference.onnx .model/eslav/inference.yml
+            curl --http1.1 --fail --location --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 1800 --connect-timeout 30 --max-time 1800 \
+              "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx?download=true" \
+              --output .model/eslav/inference.onnx
+            curl --http1.1 --fail --location --retry 8 --retry-all-errors --retry-delay 5 --retry-max-time 1800 --connect-timeout 30 --max-time 1800 \
+              "https://huggingface.co/PaddlePaddle/eslav_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml?download=true" \
+              --output .model/eslav/inference.yml
+          fi
+
           grep -Eq '^[[:space:]]*model_name:[[:space:]]*eslav_PP-OCRv5_mobile_rec([[:space:]]|$)' .model/eslav/inference.yml
           test "$(wc -c < .model/eslav/inference.onnx)" -gt 1000000
           tar --format=ustar -cf public/models/eslav_PP-OCRv5_mobile_rec.tar \
