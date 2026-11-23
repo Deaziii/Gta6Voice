@@ -182,7 +182,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       if (prefs.ocrSpeed && SPEED_PRESETS[prefs.ocrSpeed]) $("ocrSpeed").value = prefs.ocrSpeed;
 
       if (Number.isFinite(prefs.rate)) {
-        const r = clamp(prefs.rate, 1.0, 2.2);
+        const r = clamp(prefs.rate, 0.85, 2.2);
         $("rate").value = String(r);
         $("rateValue").textContent = r.toFixed(2) + "×";
         voiceEngine.rate = r;
@@ -478,7 +478,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
   $("voicePace").addEventListener("change", event => {
     if (event.target.value === "custom") return;
-    const rateVal = clamp(Number(event.target.value), 1.0, 2.2);
+    const rateVal = clamp(Number(event.target.value), 0.85, 2.2);
     voiceEngine.rate = rateVal;
     $("rate").value = String(rateVal);
     $("rateValue").textContent = rateVal.toFixed(2) + "×";
@@ -993,7 +993,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
                 cachedRuntimeReport = "Runtime: " + JSON.stringify({
                   bundle: "onnxruntime-web",
                   ...result.runtime,
-                  mode: "known-good-wasm-v0.56",
+                  mode: "known-good-wasm-v0.57",
                   detector: { model: "PP-OCRv5_mobile_det", thresh: 0.28, boxThresh: 0.48 }
                 });
               } catch (_) {
@@ -1287,7 +1287,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=0.56").then(() => {
+      navigator.serviceWorker.register("./sw.js?v=0.57").then(() => {
         refreshOfflineCacheStatus();
       }).catch(err => {
         console.warn("SW registration skipped:", err);
