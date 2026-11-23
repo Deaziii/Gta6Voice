@@ -53,7 +53,13 @@ export class VoiceEngine {
     this.fallbackToOffline = true;
     this.fallbackTimeoutMs = 1350;
     this.rate = 1.45;
-    this.volume = 1.0;
+    this.volume = 1.0; // legacy fallback
+    this.roleVolumes = {
+      [ROLES.JASON]: 1.0,
+      [ROLES.LUCIA]: 1.0,
+      [ROLES.MALE_NPC]: 1.0,
+      [ROLES.FEMALE_NPC]: 1.0
+    };
 
     this.offlineSelections = {
       [ROLES.JASON]: "",
@@ -413,7 +419,7 @@ export class VoiceEngine {
       utterance.lang = "ru-RU";
       utterance.rate = finalRate;
       utterance.pitch = prosody.pitch;
-      utterance.volume = this.volume;
+      utterance.volume = this.roleVolumes[role] ?? this.volume;
       if (voice) utterance.voice = voice;
 
       utterance.onstart = () => {
@@ -564,7 +570,7 @@ export class VoiceEngine {
       };
 
       this.audioEl.src = objectUrl;
-      this.audioEl.volume = this.volume;
+      this.audioEl.volume = this.roleVolumes[role] ?? this.volume;
       if ("preservesPitch" in this.audioEl) this.audioEl.preservesPitch = true;
       if ("webkitPreservesPitch" in this.audioEl) this.audioEl.webkitPreservesPitch = true;
       this.audioEl.playbackRate = extraPlaybackRate;
