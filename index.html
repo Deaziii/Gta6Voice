@@ -9,9 +9,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Молниеносная офлайн и ИИ-озвучка русских субтитров с распределением ролей">
   <title>GTA6 Voice · AI &amp; Offline Dubbing</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=0.63">
+  <link rel="manifest" href="./manifest.webmanifest?v=0.64">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b0e14'/%3E%3Crect x='3' y='3' width='58' height='58' rx='13' fill='none' stroke='%23c6ff5e' stroke-width='3'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='34' fill='%23c6ff5e'%3EG6%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./styles.css?v=0.63">
+  <link rel="stylesheet" href="./styles.css?v=0.64">
 </head>
 <body>
   <main class="app">
@@ -21,7 +21,7 @@
         <div>
           <div class="title-row">
             <h1>GTA6 Voice</h1>
-            <span class="ver-tag">v0.63</span>
+            <span class="ver-tag">v0.64</span>
           </div>
           <p>Живая многоголосая озвучка субтитров · Offline &amp; AI</p>
         </div>
@@ -130,13 +130,27 @@
         </div>
       </div>
 
+      <div class="speed-bar voice-pace-control">
+        <label for="voicePace">Темп голоса:</label>
+        <select id="voicePace">
+          <option value="0.85">Медленно (0.85×)</option>
+          <option value="1.00">Спокойно (1.00×)</option>
+          <option value="1.25">Живо (1.25×)</option>
+          <option value="1.45" selected>Быстро (1.45×)</option>
+          <option value="1.65">Очень быстро (1.65×)</option>
+          <option value="1.85">Максимально быстро (1.85×)</option>
+          <option value="custom">Ручная настройка</option>
+        </select>
+      </div>
+      <label class="range-label manual-rate-control"><span>Ручная настройка темпа</span><output id="rateValue">1.45×</output><input id="rate" type="range" min="0.85" max="2.20" step="0.05" value="1.45"></label>
+
       <section class="settings-area role-manager-area">
         <details class="settings-group" open>
-          <summary><span><b>Редактор ролей и распознавания</b><small>Имена, псевдонимы и голоса для каждого персонажа</small></span></summary>
+          <summary><span><b>Редактор ролей и распознавания</b><small>Имена, псевдонимы, голоса и тестовые фразы каждого персонажа</small></span></summary>
           <div class="settings-content">
             <div id="roleManagerList" class="role-manager-list"></div>
             <button id="addRoleBtn" class="secondary full" type="button">＋ Добавить роль</button>
-            <p class="hint">OCR ищет имя или псевдоним в начале строки субтитра. Совпавшее имя назначает именно эту роль; если имя не распознано, работает автоматическое распределение по грамматике и режиму диалога.</p>
+            <p class="hint">OCR ищет имя или псевдоним в начале строки субтитра. Если имя не распознано, включается автоматическое распределение по грамматике и режиму диалога. Для каждой роли можно задать свою фразу и сразу проверить выбранный голос.</p>
           </div>
         </details>
       </section>
@@ -172,7 +186,6 @@
             <div class="role-card-head">
               <span class="role-dot dot-jason"></span>
               <b data-role-name="jason">Джейсон · Главный (М)</b>
-              <button class="preview-btn" type="button" data-preview-role="jason" title="Прослушать">▶</button>
             </div>
             <select id="offlineJasonVoice"></select>
           </div>
@@ -181,7 +194,6 @@
             <div class="role-card-head">
               <span class="role-dot dot-lucia"></span>
               <b data-role-name="lucia">Люсия · Главная (Ж)</b>
-              <button class="preview-btn" type="button" data-preview-role="lucia" title="Прослушать">▶</button>
             </div>
             <select id="offlineLuciaVoice"></select>
           </div>
@@ -190,7 +202,6 @@
             <div class="role-card-head">
               <span class="role-dot dot-mnpc"></span>
               <b data-role-name="male_npc">Второстепенный (М)</b>
-              <button class="preview-btn" type="button" data-preview-role="male_npc" title="Прослушать">▶</button>
             </div>
             <select id="offlineMaleNpcVoice"></select>
           </div>
@@ -199,7 +210,6 @@
             <div class="role-card-head">
               <span class="role-dot dot-fnpc"></span>
               <b data-role-name="female_npc">Второстепенная (Ж)</b>
-              <button class="preview-btn" type="button" data-preview-role="female_npc" title="Прослушать">▶</button>
             </div>
             <select id="offlineFemaleNpcVoice"></select>
           </div>
@@ -235,36 +245,12 @@
           </label>
         </div>
 
-      <div class="api-box">
-        <label for="manualText">Проверка озвучки своим текстом</label>
-        <textarea id="manualText" rows="4" placeholder="Каждая новая строка — отдельная реплика; роли назначаются автоматически…">Погнали, времени нет!
-Вперёд, машина ждёт!
-Стоять, полиция!
-Всем на землю!</textarea>
-        <button id="speakManual" class="secondary full" type="button">Озвучить мой текст</button>
-        <p id="manualTestStatus" class="hint">Работает с офлайн-голосами и ElevenLabs, в режимах GTA Duo и Кино / Сериал.</p>
-        <div class="speed-bar voice-pace-control">
-          <label for="voicePace">Темп голоса:</label>
-          <select id="voicePace">
-            <option value="0.85">Медленно (0.85×)</option>
-            <option value="1.00">Спокойно (1.00×)</option>
-            <option value="1.25">Живо (1.25×)</option>
-            <option value="1.45" selected>Быстро (1.45×)</option>
-            <option value="1.65">Очень быстро (1.65×)</option>
-            <option value="1.85">Максимально быстро (1.85×)</option>
-            <option value="custom">Ручная настройка</option>
-          </select>
-        </div>
-        <label class="range-label manual-rate-control"><span>Ручная настройка темпа</span><output id="rateValue">1.45×</output><input id="rate" type="range" min="0.85" max="2.20" step="0.05" value="1.45"></label>
-      </div>
-
       <div id="aiVoicePanel" class="engine-body" hidden>
         <div class="role-cards">
           <div class="role-card card-jason">
             <div class="role-card-head">
               <span class="role-dot dot-jason"></span>
               <b data-role-name="jason">Джейсон · Главный (М)</b>
-              <button class="preview-btn" type="button" data-preview-role="jason" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiJasonVoice"></select>
           </div>
@@ -273,7 +259,6 @@
             <div class="role-card-head">
               <span class="role-dot dot-lucia"></span>
               <b data-role-name="lucia">Люсия · Главная (Ж)</b>
-              <button class="preview-btn" type="button" data-preview-role="lucia" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiLuciaVoice"></select>
           </div>
@@ -282,7 +267,6 @@
             <div class="role-card-head">
               <span class="role-dot dot-mnpc"></span>
               <b data-role-name="male_npc">Второстепенный (М)</b>
-              <button class="preview-btn" type="button" data-preview-role="male_npc" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiMaleNpcVoice"></select>
           </div>
@@ -291,30 +275,19 @@
             <div class="role-card-head">
               <span class="role-dot dot-fnpc"></span>
               <b data-role-name="female_npc">Второстепенная (Ж)</b>
-              <button class="preview-btn" type="button" data-preview-role="female_npc" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiFemaleNpcVoice"></select>
           </div>
         </div>
       </div>
 
-      <section class="settings-area role-volume-area">
-        <details class="settings-group" open>
-          <summary><span><b>Громкость каждой роли</b><small>Настраивается отдельно для офлайн- и ИИ-озвучки</small></span></summary>
-          <div class="settings-content role-volume-grid">
-            <label class="range-label"><span data-role-name="jason">Джейсон</span><output data-role-volume-value="jason">100%</output><input data-role-volume="jason" type="range" min="0" max="1" step="0.05" value="1"></label>
-            <label class="range-label"><span data-role-name="lucia">Люсия</span><output data-role-volume-value="lucia">100%</output><input data-role-volume="lucia" type="range" min="0" max="1" step="0.05" value="1"></label>
-            <label class="range-label"><span data-role-name="male_npc">Второстепенный (М)</span><output data-role-volume-value="male_npc">100%</output><input data-role-volume="male_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
-            <label class="range-label"><span data-role-name="female_npc">Второстепенная (Ж)</span><output data-role-volume-value="female_npc">100%</output><input data-role-volume="female_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
-          </div>
-        </details>
-      </section>
+      
     </section>
 
-    <footer>GTA6 Voice · v0.63 Offline PWA &amp; Neural AI Cast · открывай в Chrome без энергосбережения</footer>
+    <footer>GTA6 Voice · v0.64 Offline PWA &amp; Neural AI Cast · открывай в Chrome без энергосбережения</footer>
   </main>
   <audio id="aiAudio" hidden preload="auto"></audio>
   <canvas id="frame" hidden></canvas>
-  <script type="module" src="./app.js?v=0.63"></script>
+  <script type="module" src="./app.js?v=0.64"></script>
 </body>
 </html>
