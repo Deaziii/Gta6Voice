@@ -198,9 +198,11 @@ export function extractSpeakerTag(rawLine, roleDefinitions = DEFAULT_ROLE_DEFINI
     .filter(Boolean).map(name => ({ name: cleanText(name), roleId: role.id })))
     .sort((a, b) => b.name.length - a.name.length);
   for (const alias of aliases) {
-    const escaped = alias.name.replace(/[.*+?^${}()|[\]\\]/g, "\\export function extractSpeakerTag(rawLine) {
-  const line = cleanText(rawLine);
-  if (!line) return { speaker: "", text: "" };
+    if (line.toLocaleLowerCase("ru-RU").startsWith(alias.name.toLocaleLowerCase("ru-RU"))) {
+      const rest = line.slice(alias.name.length).match(/^\\s*[:：—–-]\\s*(.*)$/);
+      if (rest) return { speaker: alias.name, text: cleanText(rest[1]) };
+    }
+  }
 
   // 1. Known GTA protagonists & recurring cast (allow colon or dash)");
     const match = line.match(new RegExp("^(" + escaped + ")\\s*[:：—–-]\\s*(.*)$", "i"));
