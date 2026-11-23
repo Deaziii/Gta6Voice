@@ -189,9 +189,23 @@ export function isRussianSubtitleLine(line, options = {}) {
  * Extract speaker prefix from a subtitle line (e.g. "Jason: ...", "Люсия: ...",
  * "Охранник: ...", "[Диспетчер] ...", "Лиза: ...") without false-matching normal prose.
  */
-export function extractSpeakerTag(rawLine) {
+export function extractSpeakerTag(rawLine, roleDefinitions = DEFAULT_ROLE_DEFINITIONS) {
   const line = cleanText(rawLine);
   if (!line) return { speaker: "", text: "" };
+
+  // User-configured speaker names/aliases are checked first, including colon and dash separators.
+  const aliases = roleDefinitions.flatMap(role => [role.name, ...(role.aliases || [])]
+    .filter(Boolean).map(name => ({ name: cleanText(name), roleId: role.id })))
+    .sort((a, b) => b.name.length - a.name.length);
+  for (const alias of aliases) {
+    const escaped = alias.name.replace(/[.*+?^${}()|[\]\\]/g, "\\export function extractSpeakerTag(rawLine) {
+  const line = cleanText(rawLine);
+  if (!line) return { speaker: "", text: "" };
+
+  // 1. Known GTA protagonists & recurring cast (allow colon or dash)");
+    const match = line.match(new RegExp("^(" + escaped + ")\\s*[:：—–-]\\s*(.*)$", "i"));
+    if (match) return { speaker: cleanText(match[1]), text: cleanText(match[2]) };
+  }
 
   // 1. Known GTA protagonists & recurring cast (allow colon or dash)
   const heroMatch = line.match(
