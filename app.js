@@ -692,6 +692,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     try {
       const list = await voiceEngine.fetchAccountVoices($("elevenApiKey").value);
       populateAiVoiceSelects();
+      renderRoleManager();
       savePrefs();
       $("aiStatusText").textContent = "Голоса загружены (" + list.length + " доступно).";
     } catch (err) {
