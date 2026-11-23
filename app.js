@@ -3,6 +3,7 @@ import {
   CaptionController,
   ROLES,
   ROLE_META,
+  DEFAULT_ROLE_DEFINITIONS,
   buildDialogueTurns,
   cleanText,
   evaluateFrameGate,
@@ -62,7 +63,8 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   let lastHadSubtitle = false;
   let deferredInstallPrompt = null;
 
-  const captionController = new CaptionController();
+  let roleDefinitions = DEFAULT_ROLE_DEFINITIONS.map(role => ({ ...role, aliases: [...role.aliases] }));
+  const captionController = new CaptionController({ roleDefinitions });
   const voiceEngine = new VoiceEngine({
     audioElement: $("aiAudio"),
     onStateChange: info => {
@@ -77,6 +79,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       $("speechState").textContent = "Говорит · " + engineLabel + " (" + info.rate.toFixed(2) + "×)";
     }
   });
+  voiceEngine.setRoleDefinitions(roleDefinitions);
 
   const wait = ms => new Promise(resolve => window.setTimeout(resolve, ms));
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -107,7 +110,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     const badge = $("activeRoleBadge");
     const engineChip = $("activeEngineChip");
     if (badge) {
-      const meta = ROLE_META[role];
+      const meta = roleDefinitions.find(item => item.id === role) || ROLE_META[role];
       badge.className = "role-badge " + (meta ? "role-" + meta.id : "role-idle");
       badge.textContent = meta ? meta.label : "Персонаж: авто";
     }
@@ -139,6 +142,109 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     renderRoleBadge(captionController.getSnapshot().activeRole || "", "");
   }
 
+  function escapeRoleText(value) {
+    return String(value || "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
+
+  function renderRoleManager() {
+    const host = $("roleManagerList");
+    if (!host) return;
+    const offline = voiceEngine.refreshSystemVoices();
+    const ai = voiceEngine.getAllAiVoices();
+    host.innerHTML = "";
+    for (const role of roleDefinitions) {
+      const row = document.createElement("div");
+      row.className = "role-manager-card";
+      const offlineOptions = ['<option value="">Авто по полу</option>', ...offline.map(item =>
+        '<option value="' + escapeRoleText(item.voice.voiceURI || item.voice.name) + '">' +
+        escapeRoleText(item.voice.name + (item.gender === "f" ? " (Ж)" : item.gender === "m" ? " (М)" : "")) + '</option>'
+      )].join("");
+      const aiOptions = ['<option value="">Не выбран</option>', ...ai.map(item =>
+        '<option value="' + escapeRoleText(item.id) + '">' + escapeRoleText(item.name) + '</option>'
+      )].join("");
+      row.innerHTML = `
+        <div class="role-manager-head">
+          <strong>${escapeRoleText(role.name)}</strong>
+          ${role.builtin ? '<span class="hint">Встроенная</span>' : '<button type="button" class="secondary compact-btn" data-delete-role="' + escapeRoleText(role.id) + '">Удалить</button>'}
+        </div>
+        <label>Имя роли<input type="text" maxlength="40" data-role-field="name" data-role-id="${escapeRoleText(role.id)}" value="${escapeRoleText(role.name)}"></label>
+        <label>Имена и псевдонимы для OCR<textarea rows="2" maxlength="300" data-role-field="aliases" data-role-id="${escapeRoleText(role.id)}" placeholder="Например: Джейсон, Jason, Джей">${escapeRoleText((role.aliases || []).join(", "))}</textarea></label>
+        <label>Пол для автоматического определения<select data-role-field="gender" data-role-id="${escapeRoleText(role.id)}"><option value="m" ${role.gender === "m" ? "selected" : ""}>Мужской</option><option value="f" ${role.gender === "f" ? "selected" : ""}>Женский</option></select></label>
+        <label>Офлайн-голос<select data-role-voice="offline" data-role-id="${escapeRoleText(role.id)}">${offlineOptions}</select></label>
+        <label>Голос ElevenLabs<select data-role-voice="ai" data-role-id="${escapeRoleText(role.id)}">${aiOptions}</select></label>
+        <label class="range-label">Громкость <output data-role-volume-value="${escapeRoleText(role.id)}">${Math.round((voiceEngine.roleVolumes[role.id] ?? 1) * 100)}%</output><input type="range" min="0" max="1" step="0.05" data-role-volume="${escapeRoleText(role.id)}" value="${voiceEngine.roleVolumes[role.id] ?? 1}"></label>
+      `;
+      const offlineSelect = row.querySelector('[data-role-voice="offline"]');
+      const aiSelect = row.querySelector('[data-role-voice="ai"]');
+      offlineSelect.value = voiceEngine.offlineSelections[role.id] || "";
+      aiSelect.value = voiceEngine.aiSelections[role.id] || "";
+      host.appendChild(row);
+    }
+  }
+
+  function applyRoleDefinitions() {
+    voiceEngine.setRoleDefinitions(roleDefinitions);
+    captionController.setRoleDefinitions(roleDefinitions);
+    renderRoleManager();
+    savePrefs();
+  }
+
+  $("addRoleBtn").addEventListener("click", () => {
+    const id = "custom_" + Date.now().toString(36);
+    roleDefinitions.push({
+      id,
+      name: "Новая роль",
+      aliases: ["Новая роль"],
+      gender: "m",
+      main: false,
+      builtin: false
+    });
+    applyRoleDefinitions();
+  });
+
+  $("roleManagerList").addEventListener("input", event => {
+    const id = event.target.dataset.roleId;
+    const field = event.target.dataset.roleField;
+    if (id && field) {
+      const role = roleDefinitions.find(item => item.id === id);
+      if (!role) return;
+      if (field === "aliases") role.aliases = event.target.value.split(/[,;\n]+/).map(value => value.trim()).filter(Boolean);
+      else role[field] = event.target.value;
+      if (field === "name" && !role.aliases.includes(role.name)) role.aliases.unshift(role.name);
+      applyRoleDefinitions();
+    }
+    const volumeRole = event.target.dataset.roleVolume;
+    if (volumeRole) {
+      const value = clamp(Number(event.target.value), 0, 1);
+      voiceEngine.roleVolumes[volumeRole] = value;
+      const output = document.querySelector('[data-role-volume-value="' + volumeRole + '"]');
+      if (output) output.textContent = Math.round(value * 100) + "%";
+      savePrefs();
+    }
+  });
+
+  $("roleManagerList").addEventListener("change", event => {
+    const id = event.target.dataset.roleId;
+    if (!id) return;
+    if (event.target.dataset.roleVoice === "offline") voiceEngine.offlineSelections[id] = event.target.value;
+    if (event.target.dataset.roleVoice === "ai") voiceEngine.aiSelections[id] = event.target.value;
+    if (event.target.dataset.roleField === "gender") {
+      const role = roleDefinitions.find(item => item.id === id);
+      if (role) role.gender = event.target.value;
+      applyRoleDefinitions();
+    } else savePrefs();
+  });
+
+  $("roleManagerList").addEventListener("click", event => {
+    const id = event.target.dataset.deleteRole;
+    if (!id) return;
+    roleDefinitions = roleDefinitions.filter(role => role.id !== id || role.builtin);
+    delete voiceEngine.roleVolumes[id];
+    delete voiceEngine.offlineSelections[id];
+    delete voiceEngine.aiSelections[id];
+    applyRoleDefinitions();
+  });
+
   function savePrefs() {
     try {
       const prefs = {
@@ -149,6 +255,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         ocrSpeed: $("ocrSpeed").value,
         rate: Number($("rate").value),
         roleVolumes: { ...voiceEngine.roleVolumes },
+        roleDefinitions: roleDefinitions.map(role => ({ ...role, aliases: [...(role.aliases || [])] })),
         castMode: $("castMode").value,
         voiceMode: voiceEngine.mode,
         aiModel: $("aiModel").value,
@@ -174,6 +281,17 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       const raw = window.localStorage.getItem(PREFS_KEY);
       if (!raw) return;
       const prefs = JSON.parse(raw);
+      if (Array.isArray(prefs.roleDefinitions) && prefs.roleDefinitions.length) {
+        const valid = prefs.roleDefinitions.filter(role =>
+          role && typeof role.id === "string" && typeof role.name === "string" &&
+          (role.gender === "m" || role.gender === "f") && Array.isArray(role.aliases)
+        );
+        if (valid.length) {
+          roleDefinitions = valid.map(role => ({ ...role, aliases: role.aliases.map(String).filter(Boolean) }));
+          voiceEngine.setRoleDefinitions(roleDefinitions);
+          captionController.setRoleDefinitions(roleDefinitions);
+        }
+      }
 
       if (Number.isFinite(prefs.roiLeft)) $("roiLeft").value = String(prefs.roiLeft);
       if (Number.isFinite(prefs.roiTop)) $("roiTop").value = String(prefs.roiTop);
@@ -363,6 +481,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   loadPrefs();
   populateOfflineVoiceSelects();
   populateAiVoiceSelects();
+  renderRoleManager();
   syncEngineTabsUI();
   updateSpeechButton();
   updateRecognitionButton();
@@ -781,7 +900,8 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
     const turns = buildDialogueTurns(accepted, {
       previousRole: captionController.lastRole,
-      castMode: $("castMode").value
+      castMode: $("castMode").value,
+      roleDefinitions
     });
 
     return {
@@ -1204,7 +1324,8 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     });
     const turns = buildDialogueTurns(dialogueLines, {
       previousRole: "",
-      castMode: $("castMode").value
+      castMode: $("castMode").value,
+      roleDefinitions
     });
     const firstRole = turns[0]?.role || role;
     renderRoleBadge(firstRole, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
