@@ -1155,7 +1155,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   });
 
   function speakStandalone(text, role = ROLES.JASON) {
-    const lines = String(text || "").split(/\\r?\\n/).map(cleanText).filter(Boolean);
+    const lines = String(text || "").split(/\r?\n/).map(cleanText).filter(Boolean);
     if (!lines.length) {
       $("manualTestStatus").textContent = "Введи текст для озвучки.";
       return;
