@@ -9,9 +9,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Молниеносная офлайн и ИИ-озвучка русских субтитров с распределением ролей">
   <title>GTA6 Voice · AI &amp; Offline Dubbing</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=0.55">
+  <link rel="manifest" href="./manifest.webmanifest?v=0.56">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b0e14'/%3E%3Crect x='3' y='3' width='58' height='58' rx='13' fill='none' stroke='%23c6ff5e' stroke-width='3'/%3E%3Ctext x='32' y='44' text-anchor='middle' font-family='system-ui,sans-serif' font-weight='900' font-size='34' fill='%23c6ff5e'%3EG6%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./styles.css?v=0.55">
+  <link rel="stylesheet" href="./styles.css?v=0.56">
 </head>
 <body>
   <main class="app">
@@ -21,7 +21,7 @@
         <div>
           <div class="title-row">
             <h1>GTA6 Voice</h1>
-            <span class="ver-tag">v0.55</span>
+            <span class="ver-tag">v0.56</span>
           </div>
           <p>Живая многоголосая озвучка субтитров · Offline &amp; AI</p>
         </div>
@@ -199,10 +199,9 @@
         </details>
       </div>
 
-      <!-- PAID AI ELEVENLABS PANEL -->
-      <div id="aiVoicePanel" class="engine-body" hidden>
+      <!-- Shared ElevenLabs key and custom speech test are available in both engine modes. -->
         <div class="api-box">
-          <label for="elevenApiKey">API-ключ ElevenLabs (хранится только локально в твоём телефоне)</label>
+          <label for="elevenApiKey">API-ключ ElevenLabs (нужен только для ИИ; хранится локально на телефоне)</label>
           <div class="api-row">
             <input id="elevenApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Вставь xi-api-key от ElevenLabs…">
             <button id="toggleKeyVis" class="secondary compact-btn" type="button">Показать</button>
@@ -222,6 +221,15 @@
           </label>
         </div>
 
+      <div class="api-box">
+        <label for="manualText">Проверка озвучки своим текстом</label>
+        <textarea id="manualText" rows="4" placeholder="Каждая новая строка — отдельная реплика; роли назначаются автоматически…">Я сама поведу!
+Ладно, только жми на газ!</textarea>
+        <button id="speakManual" class="secondary full" type="button">Озвучить мой текст</button>
+        <p id="manualTestStatus" class="hint">Работает с офлайн-голосами и ElevenLabs, в режимах GTA Duo и Кино / Сериал.</p>
+      </div>
+
+      <div id="aiVoicePanel" class="engine-body" hidden>
         <div class="role-cards">
           <div class="role-card card-jason">
             <div class="role-card-head">
@@ -277,7 +285,6 @@
           <div class="settings-content">
             <label class="range-label"><span>Скорость речи</span><output id="rateValue">1.45×</output><input id="rate" type="range" min="1.00" max="2.20" step="0.05" value="1.45"></label>
             <label class="range-label"><span>Громкость</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
-            <label class="check"><input id="showNames" type="checkbox" checked><span>Считывать имена перед двоеточием (Jason / Люсия / Лиза / Коп…)</span></label>
             <textarea id="manualText" rows="2" placeholder="Введи реплику или диалог с тире для проверки ролей…">Люсия: Я сама поведу!
 Джейсон: Ладно, только жми на газ!</textarea>
             <button id="speakManual" class="secondary full" type="button">Озвучить проверочный диалог</button>
@@ -286,10 +293,10 @@
       </section>
     </section>
 
-    <footer>GTA6 Voice · v0.55 Offline PWA &amp; Neural AI Cast · открывай в Chrome без энергосбережения</footer>
+    <footer>GTA6 Voice · v0.56 Offline PWA &amp; Neural AI Cast · открывай в Chrome без энергосбережения</footer>
   </main>
   <audio id="aiAudio" hidden preload="auto"></audio>
   <canvas id="frame" hidden></canvas>
-  <script type="module" src="./app.js?v=0.55"></script>
+  <script type="module" src="./app.js?v=0.56"></script>
 </body>
 </html>
