@@ -322,10 +322,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
           if (Number.isFinite(prefs.roleVolumes[role])) {
             const value = clamp(prefs.roleVolumes[role], 0, 1);
             voiceEngine.roleVolumes[role] = value;
-            const slider = document.querySelector('[data-role-volume="' + role + '"]');
-            const output = document.querySelector('[data-role-volume-value="' + role + '"]');
-            if (slider) slider.value = String(value);
-            if (output) output.textContent = Math.round(value * 100) + "%";
           }
         }
       }
@@ -628,18 +624,6 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     syncVoicePacePreset(val);
     savePrefs();
   });
-
-  document.querySelectorAll("[data-role-volume]").forEach(slider => {
-    slider.addEventListener("input", event => {
-      const role = event.target.dataset.roleVolume;
-      const value = clamp(Number(event.target.value), 0, 1);
-      voiceEngine.roleVolumes[role] = value;
-      const output = document.querySelector('[data-role-volume-value="' + role + '"]');
-      if (output) output.textContent = Math.round(value * 100) + "%";
-      savePrefs();
-    });
-  });
-
 
   [
     [ROLES.JASON, "offlineJasonVoice"],
@@ -1308,7 +1292,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   function speakStandalone(text, role = ROLES.JASON, forceRole = false) {
     const lines = String(text || "").split(/\r?\n/).map(cleanText).filter(Boolean);
     if (!lines.length) {
-      $("manualTestStatus").textContent = "Введи текст для озвучки.";
+      $("rolePreviewStatus").textContent = "Введи текст для озвучки.";
       return;
     }
 
@@ -1336,7 +1320,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         });
     const firstRole = turns[0]?.role || role;
     renderRoleBadge(firstRole, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
-    $("manualTestStatus").textContent =
+    $("rolePreviewStatus").textContent =
       "Тест: " + (voiceEngine.mode === "elevenlabs" ? "ElevenLabs" : "Офлайн") +
       " · " + ($("castMode").value === "cinema_quad" ? "4 роли" : "GTA Duo") +
       " · реплик: " + turns.length;
@@ -1350,7 +1334,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     voiceEngine.speakItem(item, { catchUpBoost: 0 })
       .catch(err => {
         console.warn("Standalone speech error:", err);
-        $("manualTestStatus").textContent = "Ошибка озвучки: " + (err.message || String(err));
+        $("rolePreviewStatus").textContent = "Ошибка озвучки: " + (err.message || String(err));
         $("speechState").textContent = "Ошибка озвучки";
       })
       .finally(() => {
