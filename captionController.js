@@ -27,6 +27,15 @@ export const ROLE_META = {
   female_npc: { id: "female_npc", label: "Персонаж · 2 план (Ж)", short: "Персонаж Ж", gender: "f", main: false }
 };
 
+export const DEFAULT_ROLE_DEFINITIONS = [
+  { id: ROLES.JASON, name: "Джейсон", aliases: ["Jason", "Джейсон"], gender: "m", main: true, builtin: true },
+  { id: ROLES.LUCIA, name: "Люсия", aliases: ["Lucia", "Люсия", "Лусия"], gender: "f", main: true, builtin: true },
+  { id: ROLES.MALE_NPC, name: "Второстепенный (М)", aliases: ["Охранник", "Полицейский", "Мужчина"], gender: "m", main: false, builtin: true },
+  { id: ROLES.FEMALE_NPC, name: "Второстепенная (Ж)", aliases: ["Девушка", "Женщина", "Дама"], gender: "f", main: false, builtin: true }
+];
+
+const normalizeSpeakerName = value => cleanText(value).toLocaleLowerCase("ru-RU").replace(/[.]/g, "");
+
 const FEMALE_SPEAKER_KEYWORDS = new Set([
   "lucia", "люсия", "лусия", "лиза", "lisa", "сара", "sarah", "мария", "маша", "анна", "аня",
   "катя", "елена", "лена", "ольга", "оля", "наташа", "таня", "юля", "даша", "ксюша", "вика",
@@ -215,22 +224,24 @@ export function extractSpeakerTag(rawLine) {
   return { speaker: "", text: line };
 }
 
-function classifyExplicitSpeakerName(speaker) {
-  const norm = cleanText(speaker).toLocaleLowerCase("ru-RU");
+function classifyExplicitSpeakerName(speaker, roleDefinitions = DEFAULT_ROLE_DEFINITIONS) {
+  const norm = normalizeSpeakerName(speaker);
   if (!norm) return null;
-  if (/^(?:jason|джейсон)(?:$|\s)/.test(norm)) return ROLES.JASON;
-  if (/^(?:lucia|люсия|лусия)(?:$|\s)/.test(norm)) return ROLES.LUCIA;
-
-  const words = norm.split(/\s+/).filter(Boolean);
+  for (const role of roleDefinitions) {
+    const names = [role.name, ...(Array.isArray(role.aliases) ? role.aliases : [])]
+      .map(normalizeSpeakerName).filter(Boolean);
+    if (names.some(name => norm === name || norm.startsWith(name + " "))) return role.id;
+  }
+  // Keep the legacy gender heuristic only for the four built-in roles.
+  if (/^(?:jason|джейсон)(?:$|\\s)/.test(norm)) return ROLES.JASON;
+  if (/^(?:lucia|люсия|лусия)(?:$|\\s)/.test(norm)) return ROLES.LUCIA;
+  const words = norm.split(/\\s+/).filter(Boolean);
   for (const w of words) {
     if (FEMALE_SPEAKER_KEYWORDS.has(w)) return ROLES.FEMALE_NPC;
     if (MALE_A_EXCEPTIONS.has(w)) return ROLES.MALE_NPC;
   }
-
   const first = words[0] || "";
-  if (/^[а-яё]{3,}(?:а|я|ия|ша|ка|ца|нья)$/.test(first) && !MALE_A_EXCEPTIONS.has(first)) {
-    return ROLES.FEMALE_NPC;
-  }
+  if (/^[а-яё]{3,}(?:а|я|ия|ша|ка|ца|нья)$/.test(first) && !MALE_A_EXCEPTIONS.has(first)) return ROLES.FEMALE_NPC;
   return ROLES.MALE_NPC;
 }
 
@@ -257,7 +268,12 @@ function detectTextGenderCue(text) {
   return null;
 }
 
-export function alternateRole(previousRole, castMode = "gta_duo") {
+export function alternateRole(previousRole, castMode = "gta_duo", roleDefinitions = DEFAULT_ROLE_DEFINITIONS) {
+  if (roleDefinitions.length > DEFAULT_ROLE_DEFINITIONS.length) {
+    const ids = roleDefinitions.map(role => role.id);
+    const index = ids.indexOf(previousRole);
+    return ids[(index + 1 + ids.length) % ids.length] || ROLES.JASON;
+  }
   if (castMode === "cinema_quad") {
     switch (previousRole) {
       case ROLES.JASON: return ROLES.LUCIA;
@@ -285,10 +301,11 @@ export function inferSpeakerRole({
   speaker = "",
   previousRole = "",
   castMode = "gta_duo",
-  forceSwitch = false
+  forceSwitch = false,
+  roleDefinitions = DEFAULT_ROLE_DEFINITIONS
 } = {}) {
-  // 1. Explicit speaker name always wins
-  const byName = classifyExplicitSpeakerName(speaker);
+  // 1. Explicit speaker name always wins; user-defined aliases are checked before heuristics.
+  const byName = classifyExplicitSpeakerName(speaker, roleDefinitions);
   if (byName) return byName;
 
   const cleaned = cleanText(text);
@@ -310,12 +327,21 @@ export function inferSpeakerRole({
   }
 
   // 3. Grammatical gender cue in Russian text
-  if (genderCue === "f") {
-    if (shouldSwitch && previousRole === ROLES.LUCIA) return ROLES.FEMALE_NPC;
-    if (!shouldSwitch && previousRole === ROLES.FEMALE_NPC) return ROLES.FEMALE_NPC;
-    return ROLES.LUCIA;
-  }
-  if (genderCue === "m") {
+  if (genderCue === "f" || genderCue === "m") {
+    if (roleDefinitions.length > DEFAULT_ROLE_DEFINITIONS.length) {
+      const matching = roleDefinitions.filter(role => role.gender === genderCue);
+      if (matching.length) {
+        const current = matching.find(role => role.id === previousRole);
+        const next = matching.find(role => role.main && role.id !== previousRole) ||
+          matching.find(role => !role.main && role.id !== previousRole) || current || matching[0];
+        return next.id;
+      }
+    }
+    if (genderCue === "f") {
+      if (shouldSwitch && previousRole === ROLES.LUCIA) return ROLES.FEMALE_NPC;
+      if (!shouldSwitch && previousRole === ROLES.FEMALE_NPC) return ROLES.FEMALE_NPC;
+      return ROLES.LUCIA;
+    }
     if (shouldSwitch && previousRole === ROLES.JASON) return ROLES.MALE_NPC;
     if (!shouldSwitch && previousRole === ROLES.MALE_NPC) return ROLES.MALE_NPC;
     return ROLES.JASON;
@@ -323,7 +349,7 @@ export function inferSpeakerRole({
 
   // 4. Dialogue turn switch ("- Вау! / - Офигенно!")
   if (shouldSwitch && previousRole) {
-    return alternateRole(previousRole, castMode);
+    return alternateRole(previousRole, castMode, roleDefinitions);
   }
 
   // 5. Maintain current speaker continuity or default to Jason
@@ -335,7 +361,7 @@ export function inferSpeakerRole({
  * If a two-line frame contains a dash dialogue exchange ("- Вау!" / "- Офигенно! Круто!"),
  * returns two distinct role-tagged turns so two characters speak back-to-back.
  */
-export function buildDialogueTurns(acceptedLines, { previousRole = "", castMode = "gta_duo" } = {}) {
+export function buildDialogueTurns(acceptedLines, { previousRole = "", castMode = "gta_duo", roleDefinitions = DEFAULT_ROLE_DEFINITIONS } = {}) {
   if (!Array.isArray(acceptedLines) || !acceptedLines.length) return [];
 
   const groups = [];
@@ -366,7 +392,8 @@ export function buildDialogueTurns(acceptedLines, { previousRole = "", castMode 
       speaker: group.speaker,
       previousRole: runningRole,
       castMode,
-      forceSwitch: idx > 0 || (group.startsWithDash && Boolean(runningRole))
+      forceSwitch: idx > 0 || (group.startsWithDash && Boolean(runningRole)),
+      roleDefinitions
     });
     runningRole = role;
     return {
@@ -674,6 +701,7 @@ export class CaptionController {
       preemptAfterActiveMs: 1450,
       preemptSingleAfterActiveMs: 1950,
       castMode: "gta_duo",
+      roleDefinitions: DEFAULT_ROLE_DEFINITIONS,
       ...options
     };
     this.reset();
@@ -681,6 +709,10 @@ export class CaptionController {
 
   setCastMode(mode) {
     this.options.castMode = mode === "cinema_quad" ? "cinema_quad" : "gta_duo";
+  }
+
+  setRoleDefinitions(definitions) {
+    if (Array.isArray(definitions) && definitions.length) this.options.roleDefinitions = definitions;
   }
 
   reset() {
@@ -1024,7 +1056,8 @@ export class CaptionController {
           speaker: turn.speaker || speaker,
           previousRole: prev,
           castMode: this.options.castMode,
-          forceSwitch: index > 0
+          forceSwitch: index > 0,
+          roleDefinitions: this.options.roleDefinitions
         });
         prev = role;
         return { text: turn.text, speaker: turn.speaker || speaker, role };
@@ -1037,7 +1070,8 @@ export class CaptionController {
       speaker,
       previousRole,
       castMode: this.options.castMode,
-      forceSwitch: deltaStartsWithDash
+      forceSwitch: deltaStartsWithDash,
+      roleDefinitions: this.options.roleDefinitions
     });
     return [{ text: speechText, speaker, role }];
   }
