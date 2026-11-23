@@ -210,8 +210,9 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       if (!role) return;
       if (field === "aliases") role.aliases = event.target.value.split(/[,;\n]+/).map(value => value.trim()).filter(Boolean);
       else role[field] = event.target.value;
-      if (field === "name" && !role.aliases.includes(role.name)) role.aliases.unshift(role.name);
-      applyRoleDefinitions();
+      voiceEngine.setRoleDefinitions(roleDefinitions);
+      captionController.setRoleDefinitions(roleDefinitions);
+      savePrefs();
     }
     const volumeRole = event.target.dataset.roleVolume;
     if (volumeRole) {
@@ -231,6 +232,10 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     if (event.target.dataset.roleField === "gender") {
       const role = roleDefinitions.find(item => item.id === id);
       if (role) role.gender = event.target.value;
+      applyRoleDefinitions();
+    } else if (event.target.dataset.roleField === "name") {
+      const role = roleDefinitions.find(item => item.id === id);
+      if (role && !role.aliases.includes(role.name)) role.aliases.unshift(role.name);
       applyRoleDefinitions();
     } else savePrefs();
   });
@@ -860,7 +865,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       if (!line.text) continue;
       let lineText = line.text;
       let lineSpeaker = "";
-      const extracted = extractSpeakerTag(lineText);
+      const extracted = extractSpeakerTag(lineText, roleDefinitions);
       if (extracted.speaker) {
         lineSpeaker = extracted.speaker;
         if (!primarySpeaker) primarySpeaker = lineSpeaker;
@@ -1315,7 +1320,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     // Each non-empty line is a separate dialogue turn. Role assignment comes
     // from automatic speaker tags, text cues, and the selected cast mode.
     const dialogueLines = lines.map(line => {
-      const extracted = extractSpeakerTag(line);
+      const extracted = extractSpeakerTag(line, roleDefinitions);
       const spokenLine = extracted.text || line;
       return {
         text: /^[-—–]/.test(spokenLine) ? spokenLine : "- " + spokenLine,
