@@ -3,7 +3,7 @@
   "short_name": "GTA6 Voice",
   "description": "Синхронная офлайн и ИИ-озвучка русских субтитров с разделением персонажей",
   "lang": "ru",
-  "start_url": "./?v=0.57",
+  "start_url": "./?v=0.59",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
