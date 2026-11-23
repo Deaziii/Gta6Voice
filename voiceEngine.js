@@ -211,46 +211,16 @@ export class VoiceEngine {
     const cleanKey = (apiKey || "").trim();
     if (!cleanKey) throw new Error("Сначала введи API-ключ ElevenLabs.");
 
-    const voices = [];
-    let nextPageToken = "";
-    let page = 0;
-    try {
-      do {
-        const params = new URLSearchParams({ page_size: "100" });
-        if (nextPageToken) params.set("next_page_token", nextPageToken);
-        const response = await fetch("https://api.elevenlabs.io/v2/voices?" + params.toString(), {
-          method: "GET",
-          mode: "cors",
-          headers: { "xi-api-key": cleanKey, "Accept": "application/json" },
-          cache: "no-store"
-        });
-        if (!response.ok) {
-          let detail = "";
-          try {
-            const body = await response.json();
-            detail = body?.detail?.message || body?.detail?.status || body?.message || "";
-          } catch (_) {}
-          const messages = {
-            401: "ElevenLabs отклонил API-ключ (401). Проверь ключ.",
-            403: "Ключ не имеет доступа к списку голосов (403). Проверь разрешения API-ключа.",
-            429: "ElevenLabs ограничил частоту запросов (429). Подожди и попробуй снова."
-          };
-          throw new Error(messages[response.status] || ("ElevenLabs: HTTP " + response.status + (detail ? " — " + detail : "")));
-        }
-        const data = await response.json();
-        if (!Array.isArray(data?.voices)) throw new Error("ElevenLabs вернул неожиданный формат списка голосов.");
-        voices.push(...data.voices);
-        nextPageToken = data.has_more ? (data.next_page_token || "") : "";
-        page += 1;
-        if (data.has_more && !nextPageToken) throw new Error("ElevenLabs не вернул токен следующей страницы голосов.");
-      } while (nextPageToken && page < 50);
-    } catch (error) {
-      if (error instanceof TypeError && /fetch/i.test(error.message)) {
-        throw new Error("Браузер не смог соединиться с api.elevenlabs.io (сеть или CORS). Сам API-ключ не был проверен.");
-      }
-      throw error;
+    // Keep the exact endpoint and request shape from the last confirmed working release.
+    const response = await fetch("https://api.elevenlabs.io/v1/voices", {
+      method: "GET",
+      headers: { "xi-api-key": cleanKey }
+    });
+    if (!response.ok) {
+      throw new Error("ElevenLabs вернул ошибку " + response.status + " (проверь ключ или доступ API).");
     }
-
+    const data = await response.json();
+    const voices = Array.isArray(data?.voices) ? data.voices : [];
     this.customAiVoices = voices.map(v => {
       const genderLabel = (v.labels?.gender || "").toLowerCase();
       const gender = genderLabel.startsWith("f") ? "f" : genderLabel.startsWith("m") ? "m" : "u";
