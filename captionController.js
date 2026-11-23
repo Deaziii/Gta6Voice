@@ -204,11 +204,6 @@ export function extractSpeakerTag(rawLine, roleDefinitions = DEFAULT_ROLE_DEFINI
     }
   }
 
-  // 1. Known GTA protagonists & recurring cast (allow colon or dash)");
-    const match = line.match(new RegExp("^(" + escaped + ")\s*[:：—–-]\s*(.*)$", "i"));
-    if (match) return { speaker: cleanText(match[1]), text: cleanText(match[2]) };
-  }
-
   // 1. Known GTA protagonists & recurring cast (allow colon or dash)
   const heroMatch = line.match(
     /^(Jason|Lucia|Джейсон|Люсия|Лусия|Raul|Рауль|Cal|Кэл|Boobie|Буби|Brian|Брайан|Tourist|Турист)\s*[:：—–-]\s*(.*)$/i
