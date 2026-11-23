@@ -126,3 +126,18 @@ test("Bilateral Stem Gate skips DLP waves and unchanged subtitles while triggeri
   );
   assert.equal(gSame.run, false);
 });
+test("manual plain-text dialogue follows GTA Duo and Cinema Quad role distribution without speaker names", () => {
+  const lines = ["Погнали!", "Вперёд!", "Стоять!", "Всем лечь!"]
+    .map(text => ({ text: "- " + text, speaker: "" }));
+
+  const duo = buildDialogueTurns(lines.slice(0, 2), { castMode: "gta_duo" });
+  assert.deepEqual(duo.map(turn => turn.role), [ROLES.JASON, ROLES.LUCIA]);
+
+  const cinema = buildDialogueTurns(lines, { castMode: "cinema_quad" });
+  assert.deepEqual(cinema.map(turn => turn.role), [
+    ROLES.JASON,
+    ROLES.LUCIA,
+    ROLES.MALE_NPC,
+    ROLES.FEMALE_NPC
+  ]);
+});
