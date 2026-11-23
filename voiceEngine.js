@@ -168,7 +168,11 @@ export class VoiceEngine {
     for (const role of this.roleDefinitions) {
       if (!(role.id in this.roleVolumes)) this.roleVolumes[role.id] = 1;
       if (!(role.id in this.offlineSelections)) this.offlineSelections[role.id] = "";
-      if (!(role.id in this.aiSelections)) this.aiSelections[role.id] = "";
+      if (!(role.id in this.aiSelections)) {
+        this.aiSelections[role.id] = role.gender === "f"
+          ? DEFAULT_AI_ROLE_VOICES[ROLES.LUCIA]
+          : DEFAULT_AI_ROLE_VOICES[ROLES.JASON];
+      }
     }
   }
 
