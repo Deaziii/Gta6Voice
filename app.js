@@ -6,6 +6,7 @@ import {
   buildDialogueTurns,
   cleanText,
   evaluateFrameGate,
+  extractSpeakerTag,
   isRussianSubtitleLine,
   normalizeRussianHomoglyphs
 } from "./captionController.js";
@@ -722,31 +723,45 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
       : (data.text || "").split(/\r?\n/).map(text => ({ text: cleanText(text), confidence: Number(data.confidence) }));
 
     const frameHasCyrillic = lines.some(line => /[А-Яа-яЁё]/.test(line.text));
+    let primarySpeaker = "";
     const accepted = [];
     const report = [];
 
     for (const line of lines) {
       if (!line.text) continue;
-      const lineText = normalizeRussianHomoglyphs(line.text, { frameHasCyrillic });
+      let lineText = line.text;
+      let lineSpeaker = "";
+      const extracted = extractSpeakerTag(lineText);
+      if (extracted.speaker) {
+        lineSpeaker = extracted.speaker;
+        if (!primarySpeaker) primarySpeaker = lineSpeaker;
+        lineText = extracted.text;
+        if (!lineText) {
+          report.push("NAME · " + line.text);
+          continue;
+        }
+      }
+
+      lineText = normalizeRussianHomoglyphs(lineText, { frameHasCyrillic });
       const ok = isRussianSubtitleLine(lineText, { frameHasCyrillic });
       report.push((ok ? "OK" : "SKIP") + " [" +
         (Number.isFinite(line.confidence) ? Math.round(line.confidence) : "?") +
-        "%] " + lineText);
+        "%] " + (lineSpeaker ? lineSpeaker + ": " : "") + lineText);
 
       if (ok) {
         const sanitized = lineText
-          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\-]/g, "")
-          .replace(/\s+/g, " ")
+          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\\-]/g, "")
+          .replace(/\\s+/g, " ")
           .trim();
         if (sanitized.length >= 2) {
-          accepted.push({ text: sanitized, confidence: line.confidence });
+          accepted.push({ text: sanitized, speaker: lineSpeaker, confidence: line.confidence });
         }
       }
     }
 
     const text = cleanText(accepted.map(line => line.text).join(" "));
     if (text.length < 2 || text.length > 190) {
-      return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
+      return { subtitle: null, report: report.join("\\n") || "Нет текстовых строк в зоне сканирования." };
     }
 
     const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
@@ -762,11 +777,12 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     return {
       subtitle: {
         text,
+        speaker: primarySpeaker,
         confidence,
         lineCount: accepted.length,
         turns
       },
-      report: report.join("\n")
+      report: report.join("\\n")
     };
   }
 
@@ -1168,10 +1184,14 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
     // Each non-empty line is a separate dialogue turn. Role assignment comes
     // only from the selected cast mode and text cues, never from speaker names.
-    const dialogueLines = lines.map(line => ({
-      text: /^[-—–]/.test(line) ? line : "- " + line,
-      speaker: ""
-    }));
+    const dialogueLines = lines.map(line => {
+      const extracted = extractSpeakerTag(line);
+      const spokenLine = extracted.text || line;
+      return {
+        text: /^[-—–]/.test(spokenLine) ? spokenLine : "- " + spokenLine,
+        speaker: extracted.speaker
+      };
+    });
     const turns = buildDialogueTurns(dialogueLines, {
       previousRole: "",
       castMode: $("castMode").value
