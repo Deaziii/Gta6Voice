@@ -705,7 +705,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
   document.querySelectorAll("[data-preview-role]").forEach(btn => {
     btn.addEventListener("click", () => {
       const role = btn.getAttribute("data-preview-role") || ROLES.JASON;
-      speakStandalone(ROLE_TEST_PHRASES[role] || ROLE_TEST_PHRASES[ROLES.JASON], role);
+      speakStandalone(ROLE_TEST_PHRASES[role] || ROLE_TEST_PHRASES[ROLES.JASON], role, true);
     });
   });
 
@@ -1310,7 +1310,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     }
   });
 
-  function speakStandalone(text, role = ROLES.JASON) {
+  function speakStandalone(text, role = ROLES.JASON, forceRole = false) {
     const lines = String(text || "").split(/\r?\n/).map(cleanText).filter(Boolean);
     if (!lines.length) {
       $("manualTestStatus").textContent = "Введи текст для озвучки.";
@@ -1332,11 +1332,13 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         speaker: extracted.speaker
       };
     });
-    const turns = buildDialogueTurns(dialogueLines, {
-      previousRole: "",
-      castMode: $("castMode").value,
-      roleDefinitions
-    });
+    const turns = forceRole
+      ? dialogueLines.map(line => ({ text: cleanText(line.text.replace(/^[-—–]\s*/, "")), speaker: "", role }))
+      : buildDialogueTurns(dialogueLines, {
+          previousRole: "",
+          castMode: $("castMode").value,
+          roleDefinitions
+        });
     const firstRole = turns[0]?.role || role;
     renderRoleBadge(firstRole, voiceEngine.mode === "elevenlabs" ? "ai" : "offline");
     $("manualTestStatus").textContent =
