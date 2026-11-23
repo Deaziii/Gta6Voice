@@ -21,7 +21,7 @@
         <div>
           <div class="title-row">
             <h1>GTA6 Voice</h1>
-            <span class="ver-tag">v0.57</span>
+            <span class="ver-tag">v0.58</span>
           </div>
           <p>Живая многоголосая озвучка субтитров · Offline &amp; AI</p>
         </div>
@@ -287,13 +287,14 @@
         </div>
       </div>
 
-      <section class="settings-area">
-
-
-        <details class="settings-group">
-          <summary><span><b>Скорость, громкость и тест фраз</b><small>Тонкая регулировка подачи речи</small></span></summary>
-          <div class="settings-content">
-            <label class="range-label"><span>Громкость</span><output id="volumeValue">100%</output><input id="volume" type="range" min="0.2" max="1" step="0.05" value="1"></label>
+      <section class="settings-area role-volume-area">
+        <details class="settings-group" open>
+          <summary><span><b>Громкость каждой роли</b><small>Настраивается отдельно для офлайн- и ИИ-озвучки</small></span></summary>
+          <div class="settings-content role-volume-grid">
+            <label class="range-label"><span>Джейсон</span><output data-role-volume-value="jason">100%</output><input data-role-volume="jason" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span>Люсия</span><output data-role-volume-value="lucia">100%</output><input data-role-volume="lucia" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span>Второстепенный (М)</span><output data-role-volume-value="male_npc">100%</output><input data-role-volume="male_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span>Второстепенная (Ж)</span><output data-role-volume-value="female_npc">100%</output><input data-role-volume="female_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
           </div>
         </details>
       </section>
