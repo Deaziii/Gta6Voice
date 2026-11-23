@@ -148,7 +148,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         roiHeight: Number($("roiHeight").value),
         ocrSpeed: $("ocrSpeed").value,
         rate: Number($("rate").value),
-        volume: Number($("volume").value),
+        roleVolumes: { ...voiceEngine.roleVolumes },
         castMode: $("castMode").value,
         voiceMode: voiceEngine.mode,
         aiModel: $("aiModel").value,
@@ -188,11 +188,17 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         voiceEngine.rate = r;
         syncVoicePacePreset(r);
       }
-      if (Number.isFinite(prefs.volume)) {
-        const v = clamp(prefs.volume, 0.2, 1.0);
-        $("volume").value = String(v);
-        $("volumeValue").textContent = Math.round(v * 100) + "%";
-        voiceEngine.volume = v;
+      if (prefs.roleVolumes && typeof prefs.roleVolumes === "object") {
+        for (const role of Object.keys(voiceEngine.roleVolumes)) {
+          if (Number.isFinite(prefs.roleVolumes[role])) {
+            const value = clamp(prefs.roleVolumes[role], 0, 1);
+            voiceEngine.roleVolumes[role] = value;
+            const slider = document.querySelector('[data-role-volume="' + role + '"]');
+            const output = document.querySelector('[data-role-volume-value="' + role + '"]');
+            if (slider) slider.value = String(value);
+            if (output) output.textContent = Math.round(value * 100) + "%";
+          }
+        }
       }
       if (prefs.castMode === "cinema_quad" || prefs.castMode === "gta_duo") {
         $("castMode").value = prefs.castMode;
@@ -493,11 +499,15 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     savePrefs();
   });
 
-  $("volume").addEventListener("input", event => {
-    const val = Number(event.target.value);
-    voiceEngine.volume = val;
-    $("volumeValue").textContent = Math.round(val * 100) + "%";
-    savePrefs();
+  document.querySelectorAll("[data-role-volume]").forEach(slider => {
+    slider.addEventListener("input", event => {
+      const role = event.target.dataset.roleVolume;
+      const value = clamp(Number(event.target.value), 0, 1);
+      voiceEngine.roleVolumes[role] = value;
+      const output = document.querySelector('[data-role-volume-value="' + role + '"]');
+      if (output) output.textContent = Math.round(value * 100) + "%";
+      savePrefs();
+    });
   });
 
 
@@ -993,7 +1003,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
                 cachedRuntimeReport = "Runtime: " + JSON.stringify({
                   bundle: "onnxruntime-web",
                   ...result.runtime,
-                  mode: "known-good-wasm-v0.57",
+                  mode: "known-good-wasm-v0.58",
                   detector: { model: "PP-OCRv5_mobile_det", thresh: 0.28, boxThresh: 0.48 }
                 });
               } catch (_) {
@@ -1287,7 +1297,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js?v=0.57").then(() => {
+      navigator.serviceWorker.register("./sw.js?v=0.58").then(() => {
         refreshOfflineCacheStatus();
       }).catch(err => {
         console.warn("SW registration skipped:", err);
