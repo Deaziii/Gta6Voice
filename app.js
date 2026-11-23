@@ -112,7 +112,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     if (badge) {
       const meta = roleDefinitions.find(item => item.id === role) || ROLE_META[role];
       badge.className = "role-badge " + (meta ? "role-" + meta.id : "role-idle");
-      badge.textContent = meta ? meta.label : "Персонаж: авто";
+      badge.textContent = meta ? (meta.name || meta.label || meta.short || role) : "Персонаж: авто";
     }
     if (engineChip) {
       if (!engineType) {
