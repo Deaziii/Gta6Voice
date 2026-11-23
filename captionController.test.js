@@ -141,3 +141,25 @@ test("manual plain-text dialogue follows GTA Duo and Cinema Quad role distributi
     ROLES.FEMALE_NPC
   ]);
 });
+
+
+test("custom role aliases are extracted from OCR prefixes and routed to the matching role", () => {
+  const roles = [
+    { id: "jason", name: "Джейсон", aliases: ["Jason", "Джейсон"], gender: "m", main: true },
+    { id: "lucia", name: "Люсия", aliases: ["Lucia", "Люсия"], gender: "f", main: true },
+    { id: "raul", name: "Рауль", aliases: ["Raul", "Рауль", "Рау"], gender: "m", main: false }
+  ];
+  const tagged = extractSpeakerTag("Рауль — Я уже здесь!", roles);
+  assert.equal(tagged.speaker, "Рауль");
+  assert.equal(tagged.text, "Я уже здесь!");
+  assert.equal(
+    inferSpeakerRole({ text: tagged.text, speaker: tagged.speaker, roleDefinitions: roles }),
+    "raul"
+  );
+  const turns = buildDialogueTurns([
+    { text: tagged.text, speaker: tagged.speaker },
+    { text: "Джейсон, машина готова!", speaker: "Джейсон" }
+  ], { castMode: "cinema_quad", roleDefinitions: roles });
+  assert.equal(turns[0].role, "raul");
+  assert.equal(turns[1].role, "jason");
+});
