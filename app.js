@@ -750,8 +750,8 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
       if (ok) {
         const sanitized = lineText
-          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\\-]/g, "")
-          .replace(/\\s+/g, " ")
+          .replace(/[^А-Яа-яЁё0-9 .,!?…:;()'’«»—–\-]/g, "")
+          .replace(/\s+/g, " ")
           .trim();
         if (sanitized.length >= 2) {
           accepted.push({ text: sanitized, speaker: lineSpeaker, confidence: line.confidence });
@@ -761,7 +761,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
 
     const text = cleanText(accepted.map(line => line.text).join(" "));
     if (text.length < 2 || text.length > 190) {
-      return { subtitle: null, report: report.join("\\n") || "Нет текстовых строк в зоне сканирования." };
+      return { subtitle: null, report: report.join("\n") || "Нет текстовых строк в зоне сканирования." };
     }
 
     const confidences = accepted.map(line => line.confidence).filter(Number.isFinite);
@@ -782,7 +782,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
         lineCount: accepted.length,
         turns
       },
-      report: report.join("\\n")
+      report: report.join("\n")
     };
   }
 
@@ -1183,7 +1183,7 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     activeSpeechStartedAt = Date.now();
 
     // Each non-empty line is a separate dialogue turn. Role assignment comes
-    // only from the selected cast mode and text cues, never from speaker names.
+    // from automatic speaker tags, text cues, and the selected cast mode.
     const dialogueLines = lines.map(line => {
       const extracted = extractSpeakerTag(line);
       const spokenLine = extracted.text || line;
