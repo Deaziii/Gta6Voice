@@ -171,7 +171,7 @@
           <div class="role-card card-jason">
             <div class="role-card-head">
               <span class="role-dot dot-jason"></span>
-              <b>Джейсон · Главный (М)</b>
+              <b data-role-name="jason">Джейсон · Главный (М)</b>
               <button class="preview-btn" type="button" data-preview-role="jason" title="Прослушать">▶</button>
             </div>
             <select id="offlineJasonVoice"></select>
@@ -180,7 +180,7 @@
           <div class="role-card card-lucia">
             <div class="role-card-head">
               <span class="role-dot dot-lucia"></span>
-              <b>Люсия · Главная (Ж)</b>
+              <b data-role-name="lucia">Люсия · Главная (Ж)</b>
               <button class="preview-btn" type="button" data-preview-role="lucia" title="Прослушать">▶</button>
             </div>
             <select id="offlineLuciaVoice"></select>
@@ -189,7 +189,7 @@
           <div class="role-card card-mnpc">
             <div class="role-card-head">
               <span class="role-dot dot-mnpc"></span>
-              <b>Второстепенный (М)</b>
+              <b data-role-name="male_npc">Второстепенный (М)</b>
               <button class="preview-btn" type="button" data-preview-role="male_npc" title="Прослушать">▶</button>
             </div>
             <select id="offlineMaleNpcVoice"></select>
@@ -198,7 +198,7 @@
           <div class="role-card card-fnpc">
             <div class="role-card-head">
               <span class="role-dot dot-fnpc"></span>
-              <b>Второстепенная (Ж)</b>
+              <b data-role-name="female_npc">Второстепенная (Ж)</b>
               <button class="preview-btn" type="button" data-preview-role="female_npc" title="Прослушать">▶</button>
             </div>
             <select id="offlineFemaleNpcVoice"></select>
@@ -263,7 +263,7 @@
           <div class="role-card card-jason">
             <div class="role-card-head">
               <span class="role-dot dot-jason"></span>
-              <b>Джейсон · Главный (М)</b>
+              <b data-role-name="jason">Джейсон · Главный (М)</b>
               <button class="preview-btn" type="button" data-preview-role="jason" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiJasonVoice"></select>
@@ -272,7 +272,7 @@
           <div class="role-card card-lucia">
             <div class="role-card-head">
               <span class="role-dot dot-lucia"></span>
-              <b>Люсия · Главная (Ж)</b>
+              <b data-role-name="lucia">Люсия · Главная (Ж)</b>
               <button class="preview-btn" type="button" data-preview-role="lucia" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiLuciaVoice"></select>
@@ -281,7 +281,7 @@
           <div class="role-card card-mnpc">
             <div class="role-card-head">
               <span class="role-dot dot-mnpc"></span>
-              <b>Второстепенный (М)</b>
+              <b data-role-name="male_npc">Второстепенный (М)</b>
               <button class="preview-btn" type="button" data-preview-role="male_npc" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiMaleNpcVoice"></select>
@@ -290,7 +290,7 @@
           <div class="role-card card-fnpc">
             <div class="role-card-head">
               <span class="role-dot dot-fnpc"></span>
-              <b>Второстепенная (Ж)</b>
+              <b data-role-name="female_npc">Второстепенная (Ж)</b>
               <button class="preview-btn" type="button" data-preview-role="female_npc" title="Прослушать ИИ">▶</button>
             </div>
             <select id="aiFemaleNpcVoice"></select>
@@ -302,10 +302,10 @@
         <details class="settings-group" open>
           <summary><span><b>Громкость каждой роли</b><small>Настраивается отдельно для офлайн- и ИИ-озвучки</small></span></summary>
           <div class="settings-content role-volume-grid">
-            <label class="range-label"><span>Джейсон</span><output data-role-volume-value="jason">100%</output><input data-role-volume="jason" type="range" min="0" max="1" step="0.05" value="1"></label>
-            <label class="range-label"><span>Люсия</span><output data-role-volume-value="lucia">100%</output><input data-role-volume="lucia" type="range" min="0" max="1" step="0.05" value="1"></label>
-            <label class="range-label"><span>Второстепенный (М)</span><output data-role-volume-value="male_npc">100%</output><input data-role-volume="male_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
-            <label class="range-label"><span>Второстепенная (Ж)</span><output data-role-volume-value="female_npc">100%</output><input data-role-volume="female_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span data-role-name="jason">Джейсон</span><output data-role-volume-value="jason">100%</output><input data-role-volume="jason" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span data-role-name="lucia">Люсия</span><output data-role-volume-value="lucia">100%</output><input data-role-volume="lucia" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span data-role-name="male_npc">Второстепенный (М)</span><output data-role-volume-value="male_npc">100%</output><input data-role-volume="male_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
+            <label class="range-label"><span data-role-name="female_npc">Второстепенная (Ж)</span><output data-role-volume-value="female_npc">100%</output><input data-role-volume="female_npc" type="range" min="0" max="1" step="0.05" value="1"></label>
           </div>
         </details>
       </section>
