@@ -152,6 +152,10 @@ import { DEFAULT_AI_ROLE_VOICES, VoiceEngine } from "./voiceEngine.js";
     const offline = voiceEngine.refreshSystemVoices();
     const ai = voiceEngine.getAllAiVoices();
     host.innerHTML = "";
+    document.querySelectorAll("[data-role-name]").forEach(node => {
+      const role = roleDefinitions.find(item => item.id === node.dataset.roleName);
+      if (role) node.textContent = role.name;
+    });
     for (const role of roleDefinitions) {
       const row = document.createElement("div");
       row.className = "role-manager-card";
