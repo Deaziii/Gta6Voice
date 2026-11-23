@@ -60,6 +60,7 @@ export class VoiceEngine {
       [ROLES.MALE_NPC]: 1.0,
       [ROLES.FEMALE_NPC]: 1.0
     };
+    this.roleDefinitions = Object.values(ROLE_META).map(meta => ({ ...meta, name: meta.short, aliases: [meta.short] }));
 
     this.offlineSelections = {
       [ROLES.JASON]: "",
@@ -158,6 +159,16 @@ export class VoiceEngine {
       try {
         if (speechSynthesis.paused) speechSynthesis.resume();
       } catch (_) {}
+    }
+  }
+
+  setRoleDefinitions(definitions = []) {
+    if (!Array.isArray(definitions) || !definitions.length) return;
+    this.roleDefinitions = definitions.map(role => ({ ...role }));
+    for (const role of this.roleDefinitions) {
+      if (!(role.id in this.roleVolumes)) this.roleVolumes[role.id] = 1;
+      if (!(role.id in this.offlineSelections)) this.offlineSelections[role.id] = "";
+      if (!(role.id in this.aiSelections)) this.aiSelections[role.id] = "";
     }
   }
 
@@ -334,8 +345,9 @@ export class VoiceEngine {
       }
     }
 
-    const wantGender = ROLE_META[role]?.gender || "m";
-    const isMain = Boolean(ROLE_META[role]?.main);
+    const roleMeta = this.roleDefinitions.find(item => item.id === role) || ROLE_META[role] || {};
+    const wantGender = roleMeta.gender || "m";
+    const isMain = Boolean(roleMeta.main);
     const matchingGender = ruVoices.filter(v => v.gender === wantGender);
 
     if (matchingGender.length >= 2) {
@@ -371,6 +383,8 @@ export class VoiceEngine {
       }
     }
     // Distinct pitch sculpting when the phone only has 1-2 Russian offline voices installed
+    const roleMeta = this.roleDefinitions.find(item => item.id === role) || ROLE_META[role] || {};
+    if (!ROLE_META[role]) return { pitch: roleMeta.gender === "f" ? 1.12 : 0.96, rateMul: 1.02 };
     switch (role) {
       case ROLES.JASON: return { pitch: 0.90, rateMul: 1.0 };
       case ROLES.LUCIA: return { pitch: 1.09, rateMul: 1.02 };
